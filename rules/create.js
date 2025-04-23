@@ -1,6 +1,7 @@
 const config = require('../config');
 const logger = require('../utils/logger');
 const { GraphApiClient } = require('../utils/graph-api');
+const { listUsers } = require('../auth/token-manager');
 
 /**
  * Create a new mail rule
@@ -8,28 +9,69 @@ const { GraphApiClient } = require('../utils/graph-api');
  * @returns {Promise<Object>} - Creation result
  */
 async function createRuleHandler(params = {}) {
-  const userId = params.userId || 'default';
+  let userId = params.userId;
+  if (!userId) {
+    const users = await listUsers();
+    if (users.length === 0) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'No authenticated users found. Please authenticate first.'
+          })
+        }]
+      };
+    }
+    userId = users.length === 1 ? users[0] : params.userId;
+    if (!userId) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'Multiple users found. Please specify userId parameter.'
+          })
+        }]
+      };
+    }
+  }
   
   if (!params.displayName) {
     return {
-      status: 'error',
-      message: 'Rule display name is required'
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'error',
+          message: 'Rule display name is required'
+        })
+      }]
     };
   }
   
   // Validate that at least one condition is provided
   if (!params.conditions || Object.keys(params.conditions).length === 0) {
     return {
-      status: 'error',
-      message: 'At least one condition is required for the rule'
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'error',
+          message: 'At least one condition is required for the rule'
+        })
+      }]
     };
   }
   
   // Validate that at least one action is provided
   if (!params.actions || Object.keys(params.actions).length === 0) {
     return {
-      status: 'error',
-      message: 'At least one action is required for the rule'
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'error',
+          message: 'At least one action is required for the rule'
+        })
+      }]
     };
   }
   
@@ -57,17 +99,27 @@ async function createRuleHandler(params = {}) {
     const rule = await graphClient.post('/me/mailFolders/inbox/messageRules', ruleData);
     
     return {
-      status: 'success',
-      message: 'Rule created successfully',
-      ruleId: rule.id,
-      displayName: rule.displayName
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'success',
+          message: 'Rule created successfully',
+          ruleId: rule.id,
+          displayName: rule.displayName
+        })
+      }]
     };
   } catch (error) {
     logger.error(`Error creating mail rule: ${error.message}`);
     
     return {
-      status: 'error',
-      message: `Failed to create mail rule: ${error.message}`
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'error',
+          message: `Failed to create mail rule: ${error.message}`
+        })
+      }]
     };
   }
 }
@@ -78,13 +130,44 @@ async function createRuleHandler(params = {}) {
  * @returns {Promise<Object>} - Update result
  */
 async function updateRuleHandler(params = {}) {
-  const userId = params.userId || 'default';
+  let userId = params.userId;
+  if (!userId) {
+    const users = await listUsers();
+    if (users.length === 0) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'No authenticated users found. Please authenticate first.'
+          })
+        }]
+      };
+    }
+    userId = users.length === 1 ? users[0] : params.userId;
+    if (!userId) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'Multiple users found. Please specify userId parameter.'
+          })
+        }]
+      };
+    }
+  }
   const ruleId = params.ruleId;
   
   if (!ruleId) {
     return {
-      status: 'error',
-      message: 'Rule ID is required'
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'error',
+          message: 'Rule ID is required'
+        })
+      }]
     };
   }
   
@@ -120,16 +203,26 @@ async function updateRuleHandler(params = {}) {
     await graphClient.patch(`/me/mailFolders/inbox/messageRules/${ruleId}`, updateData);
     
     return {
-      status: 'success',
-      message: 'Rule updated successfully',
-      ruleId
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'success',
+          message: 'Rule updated successfully',
+          ruleId
+        })
+      }]
     };
   } catch (error) {
     logger.error(`Error updating mail rule: ${error.message}`);
     
     return {
-      status: 'error',
-      message: `Failed to update mail rule: ${error.message}`
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'error',
+          message: `Failed to update mail rule: ${error.message}`
+        })
+      }]
     };
   }
 }
@@ -140,13 +233,44 @@ async function updateRuleHandler(params = {}) {
  * @returns {Promise<Object>} - Deletion result
  */
 async function deleteRuleHandler(params = {}) {
-  const userId = params.userId || 'default';
+  let userId = params.userId;
+  if (!userId) {
+    const users = await listUsers();
+    if (users.length === 0) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'No authenticated users found. Please authenticate first.'
+          })
+        }]
+      };
+    }
+    userId = users.length === 1 ? users[0] : params.userId;
+    if (!userId) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'Multiple users found. Please specify userId parameter.'
+          })
+        }]
+      };
+    }
+  }
   const ruleId = params.ruleId;
   
   if (!ruleId) {
     return {
-      status: 'error',
-      message: 'Rule ID is required'
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'error',
+          message: 'Rule ID is required'
+        })
+      }]
     };
   }
   
@@ -159,16 +283,26 @@ async function deleteRuleHandler(params = {}) {
     await graphClient.delete(`/me/mailFolders/inbox/messageRules/${ruleId}`);
     
     return {
-      status: 'success',
-      message: 'Rule deleted successfully',
-      ruleId
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'success',
+          message: 'Rule deleted successfully',
+          ruleId
+        })
+      }]
     };
   } catch (error) {
     logger.error(`Error deleting mail rule: ${error.message}`);
     
     return {
-      status: 'error',
-      message: `Failed to delete mail rule: ${error.message}`
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'error',
+          message: `Failed to delete mail rule: ${error.message}`
+        })
+      }]
     };
   }
 }

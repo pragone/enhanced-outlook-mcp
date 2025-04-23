@@ -20,13 +20,8 @@ const logger = winston.createLogger({
   level: config.server.logLevel,
   format: customFormat,
   transports: [
-    // Console transport
-    new winston.transports.Console({
-      format: winston.format.combine(
-        winston.format.colorize(),
-        customFormat
-      )
-    }),
+    // Console transport removed to avoid interfering with STDIO JSON communication
+    
     // File transport for errors and above
     new winston.transports.File({ 
       filename: 'error.log', 

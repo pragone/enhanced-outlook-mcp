@@ -31,8 +31,13 @@ class GraphApiClient {
     // Get access token
     const tokenInfo = await getToken(this.userId);
     if (!tokenInfo || !tokenInfo.access_token) {
+      logger.error(`No valid access token found for user '${this.userId}'`);
+      logger.info('Please authenticate with the proper scopes before trying again');
       throw new Error('No valid access token found. Please authenticate first.');
     }
+    
+    // Log success but not the token itself
+    logger.debug(`Successfully retrieved access token for user '${this.userId}'`);
     
     return {
       method,

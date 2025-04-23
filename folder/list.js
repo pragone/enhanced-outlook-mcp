@@ -2,6 +2,7 @@ const config = require('../config');
 const logger = require('../utils/logger');
 const { GraphApiClient } = require('../utils/graph-api');
 const { buildQueryParams } = require('../utils/odata-helpers');
+const { listUsers } = require('../auth/token-manager');
 
 /**
  * List mail folders
@@ -9,7 +10,33 @@ const { buildQueryParams } = require('../utils/odata-helpers');
  * @returns {Promise<Object>} - List of folders
  */
 async function listFoldersHandler(params = {}) {
-  const userId = params.userId || 'default';
+  let userId = params.userId;
+  if (!userId) {
+    const users = await listUsers();
+    if (users.length === 0) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'No authenticated users found. Please authenticate first.'
+          })
+        }]
+      };
+    }
+    userId = users.length === 1 ? users[0] : params.userId;
+    if (!userId) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'Multiple users found. Please specify userId parameter.'
+          })
+        }]
+      };
+    }
+  }
   const parentFolderId = params.parentFolderId;
   
   try {
@@ -38,8 +65,13 @@ async function listFoldersHandler(params = {}) {
     
     if (!response || !response.value) {
       return {
-        status: 'error',
-        message: 'Failed to retrieve folders'
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'Failed to retrieve folders'
+          })
+        }]
       };
     }
     
@@ -54,17 +86,27 @@ async function listFoldersHandler(params = {}) {
     }));
     
     return {
-      status: 'success',
-      count: folders.length,
-      parentFolderId: parentFolderId || 'root',
-      folders
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'success',
+          count: folders.length,
+          parentFolderId: parentFolderId || 'root',
+          folders
+        })
+      }]
     };
   } catch (error) {
     logger.error(`Error listing folders: ${error.message}`);
     
     return {
-      status: 'error',
-      message: `Failed to list folders: ${error.message}`
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'error',
+          message: `Failed to list folders: ${error.message}`
+        })
+      }]
     };
   }
 }
@@ -75,13 +117,44 @@ async function listFoldersHandler(params = {}) {
  * @returns {Promise<Object>} - Folder info
  */
 async function getFolderHandler(params = {}) {
-  const userId = params.userId || 'default';
+  let userId = params.userId;
+  if (!userId) {
+    const users = await listUsers();
+    if (users.length === 0) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'No authenticated users found. Please authenticate first.'
+          })
+        }]
+      };
+    }
+    userId = users.length === 1 ? users[0] : params.userId;
+    if (!userId) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'Multiple users found. Please specify userId parameter.'
+          })
+        }]
+      };
+    }
+  }
   const folderId = params.folderId;
   
   if (!folderId) {
     return {
-      status: 'error',
-      message: 'Folder ID is required'
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'error',
+          message: 'Folder ID is required'
+        })
+      }]
     };
   }
   
@@ -105,8 +178,13 @@ async function getFolderHandler(params = {}) {
     
     if (!folder) {
       return {
-        status: 'error',
-        message: `Folder not found with ID: ${folderId}`
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: `Folder not found with ID: ${folderId}`
+          })
+        }]
       };
     }
     
@@ -145,15 +223,25 @@ async function getFolderHandler(params = {}) {
     };
     
     return {
-      status: 'success',
-      folder: folderInfo
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'success',
+          folder: folderInfo
+        })
+      }]
     };
   } catch (error) {
     logger.error(`Error getting folder: ${error.message}`);
     
     return {
-      status: 'error',
-      message: `Failed to get folder: ${error.message}`
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'error',
+          message: `Failed to get folder: ${error.message}`
+        })
+      }]
     };
   }
 }

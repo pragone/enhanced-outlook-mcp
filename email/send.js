@@ -1,6 +1,7 @@
 const config = require('../config');
 const logger = require('../utils/logger');
 const { GraphApiClient } = require('../utils/graph-api');
+const { listUsers } = require('../auth/token-manager');
 
 /**
  * Send a new email
@@ -8,47 +9,90 @@ const { GraphApiClient } = require('../utils/graph-api');
  * @returns {Promise<Object>} - Send result
  */
 async function sendEmailHandler(params = {}) {
-  const userId = params.userId || 'default';
-  
-  // Check required parameters
-  if (!params.subject) {
-    return {
-      status: 'error',
-      message: 'Email subject is required'
-    };
-  }
-  
-  if (!params.body) {
-    return {
-      status: 'error',
-      message: 'Email body is required'
-    };
-  }
-  
-  // At least one recipient is required (to, cc, or bcc)
-  if (!params.to && !params.cc && !params.bcc) {
-    return {
-      status: 'error',
-      message: 'At least one recipient (to, cc, or bcc) is required'
-    };
-  }
-  
   try {
-    logger.info(`Sending email for user ${userId} with subject: ${params.subject}`);
+    const { to, subject, body, contentType, cc, bcc, attachments } = params;
+    
+    let userId = params.userId;
+    if (!userId) {
+      const users = await listUsers();
+      if (users.length === 0) {
+        return {
+          content: [{
+            type: "text", 
+            text: JSON.stringify({
+              status: 'error',
+              message: 'No authenticated users found. Please authenticate first.'
+            })
+          }]
+        };
+      }
+      userId = users.length === 1 ? users[0] : params.userId;
+      if (!userId) {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              status: 'error',
+              message: 'Multiple users found. Please specify userId parameter to indicate which account to use.'
+            })
+          }]
+        };
+      }
+    }
+    
+    // Check required parameters
+    if (!subject) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'Email subject is required'
+          })
+        }]
+      };
+    }
+    
+    if (!body) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'Email body is required'
+          })
+        }]
+      };
+    }
+    
+    // At least one recipient is required (to, cc, or bcc)
+    if (!to && !cc && !bcc) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'At least one recipient (to, cc, or bcc) is required'
+          })
+        }]
+      };
+    }
+    
+    logger.info(`Sending email for user ${userId} with subject: ${subject}`);
     
     const graphClient = new GraphApiClient(userId);
     
     // Prepare recipients
-    const toRecipients = formatRecipients(params.to);
-    const ccRecipients = formatRecipients(params.cc);
-    const bccRecipients = formatRecipients(params.bcc);
+    const toRecipients = formatRecipients(to);
+    const ccRecipients = formatRecipients(cc);
+    const bccRecipients = formatRecipients(bcc);
     
     // Prepare email message
     const message = {
-      subject: params.subject,
+      subject: subject,
       body: {
-        contentType: params.bodyType || 'HTML',
-        content: params.body
+        contentType: contentType || 'HTML',
+        content: body
       },
       toRecipients,
       ccRecipients,
@@ -67,21 +111,31 @@ async function sendEmailHandler(params = {}) {
     });
     
     return {
-      status: 'success',
-      message: 'Email sent successfully',
-      subject: params.subject,
-      recipientCount: {
-        to: toRecipients.length,
-        cc: ccRecipients.length,
-        bcc: bccRecipients.length
-      }
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'success',
+          message: 'Email sent successfully',
+          subject: subject,
+          recipientCount: {
+            to: toRecipients.length,
+            cc: ccRecipients.length,
+            bcc: bccRecipients.length
+          }
+        })
+      }]
     };
   } catch (error) {
     logger.error(`Error sending email: ${error.message}`);
     
     return {
-      status: 'error',
-      message: `Failed to send email: ${error.message}`
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'error',
+          message: `Failed to send email: ${error.message}`
+        })
+      }]
     };
   }
 }
@@ -92,7 +146,23 @@ async function sendEmailHandler(params = {}) {
  * @returns {Promise<Object>} - Draft creation result
  */
 async function createDraftHandler(params = {}) {
-  const userId = params.userId || 'default';
+  let userId = params.userId;
+  if (!userId) {
+    const users = await listUsers();
+    if (users.length === 0) {
+      return formatMcpResponse({
+        status: 'error',
+        message: 'No authenticated users found. Please authenticate first.'
+      });
+    }
+    userId = users.length === 1 ? users[0] : params.userId;
+    if (!userId) {
+      return formatMcpResponse({
+        status: 'error',
+        message: 'Multiple users found. Please specify userId parameter.'
+      });
+    }
+  }
   
   try {
     logger.info(`Creating email draft for user ${userId}`);
@@ -125,20 +195,20 @@ async function createDraftHandler(params = {}) {
     // Create draft by saving to drafts folder
     const draftEmail = await graphClient.post('/me/messages', message);
     
-    return {
+    return formatMcpResponse({
       status: 'success',
       message: 'Draft email created successfully',
       draftId: draftEmail.id,
       subject: params.subject,
       webLink: draftEmail.webLink
-    };
+    });
   } catch (error) {
     logger.error(`Error creating draft email: ${error.message}`);
     
-    return {
+    return formatMcpResponse({
       status: 'error',
       message: `Failed to create draft email: ${error.message}`
-    };
+    });
   }
 }
 
@@ -148,21 +218,37 @@ async function createDraftHandler(params = {}) {
  * @returns {Promise<Object>} - Reply result
  */
 async function replyEmailHandler(params = {}) {
-  const userId = params.userId || 'default';
+  let userId = params.userId;
+  if (!userId) {
+    const users = await listUsers();
+    if (users.length === 0) {
+      return formatMcpResponse({
+        status: 'error',
+        message: 'No authenticated users found. Please authenticate first.'
+      });
+    }
+    userId = users.length === 1 ? users[0] : params.userId;
+    if (!userId) {
+      return formatMcpResponse({
+        status: 'error',
+        message: 'Multiple users found. Please specify userId parameter.'
+      });
+    }
+  }
   const emailId = params.emailId;
   
   if (!emailId) {
-    return {
+    return formatMcpResponse({
       status: 'error',
       message: 'Email ID is required'
-    };
+    });
   }
   
   if (!params.body) {
-    return {
+    return formatMcpResponse({
       status: 'error',
       message: 'Reply body is required'
-    };
+    });
   }
   
   try {
@@ -180,18 +266,18 @@ async function replyEmailHandler(params = {}) {
       comment: params.body
     });
     
-    return {
+    return formatMcpResponse({
       status: 'success',
       message: `${params.replyAll ? 'Reply all' : 'Reply'} sent successfully`,
       emailId
-    };
+    });
   } catch (error) {
     logger.error(`Error replying to email: ${error.message}`);
     
-    return {
+    return formatMcpResponse({
       status: 'error',
       message: `Failed to reply to email: ${error.message}`
-    };
+    });
   }
 }
 
@@ -201,21 +287,25 @@ async function replyEmailHandler(params = {}) {
  * @returns {Promise<Object>} - Forward result
  */
 async function forwardEmailHandler(params = {}) {
-  const userId = params.userId || 'default';
+  let userId = params.userId;
+  if (!userId) {
+    const users = await listUsers();
+    userId = users.length === 1 ? users[0] : 'default';
+  }
   const emailId = params.emailId;
   
   if (!emailId) {
-    return {
+    return formatMcpResponse({
       status: 'error',
       message: 'Email ID is required'
-    };
+    });
   }
   
   if (!params.to) {
-    return {
+    return formatMcpResponse({
       status: 'error',
       message: 'At least one recipient is required'
-    };
+    });
   }
   
   try {
@@ -232,19 +322,19 @@ async function forwardEmailHandler(params = {}) {
       toRecipients
     });
     
-    return {
+    return formatMcpResponse({
       status: 'success',
       message: 'Email forwarded successfully',
       emailId,
       recipientCount: toRecipients.length
-    };
+    });
   } catch (error) {
     logger.error(`Error forwarding email: ${error.message}`);
     
-    return {
+    return formatMcpResponse({
       status: 'error',
       message: `Failed to forward email: ${error.message}`
-    };
+    });
   }
 }
 
@@ -312,6 +402,22 @@ function formatRecipients(recipients) {
       }
     };
   });
+}
+
+/**
+ * Format response for MCP
+ * @param {Object} data - Response data
+ * @returns {Object} - MCP formatted response
+ */
+function formatMcpResponse(data) {
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(data)
+      }
+    ]
+  };
 }
 
 module.exports = {

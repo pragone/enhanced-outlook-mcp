@@ -1,6 +1,7 @@
 const config = require('../config');
 const logger = require('../utils/logger');
 const { GraphApiClient } = require('../utils/graph-api');
+const { listUsers } = require('../auth/token-manager');
 
 /**
  * Move emails to a folder
@@ -8,21 +9,57 @@ const { GraphApiClient } = require('../utils/graph-api');
  * @returns {Promise<Object>} - Move result
  */
 async function moveEmailsHandler(params = {}) {
-  const userId = params.userId || 'default';
+  let userId = params.userId;
+  if (!userId) {
+    const users = await listUsers();
+    if (users.length === 0) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'No authenticated users found. Please authenticate first.'
+          })
+        }]
+      };
+    }
+    userId = users.length === 1 ? users[0] : params.userId;
+    if (!userId) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'Multiple users found. Please specify userId parameter.'
+          })
+        }]
+      };
+    }
+  }
   const emailIds = params.emailIds;
   const destinationFolderId = params.destinationFolderId;
   
   if (!emailIds || !Array.isArray(emailIds) || emailIds.length === 0) {
     return {
-      status: 'error',
-      message: 'At least one email ID is required'
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'error',
+          message: 'At least one email ID is required'
+        })
+      }]
     };
   }
   
   if (!destinationFolderId) {
     return {
-      status: 'error',
-      message: 'Destination folder ID is required'
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'error',
+          message: 'Destination folder ID is required'
+        })
+      }]
     };
   }
   
@@ -56,17 +93,27 @@ async function moveEmailsHandler(params = {}) {
     }
     
     return {
-      status: results.failed.length === 0 ? 'success' : 'partial',
-      message: `Moved ${results.success.length} of ${emailIds.length} emails to folder`,
-      destinationFolderId,
-      results
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: results.failed.length === 0 ? 'success' : 'partial',
+          message: `Moved ${results.success.length} of ${emailIds.length} emails to folder`,
+          destinationFolderId,
+          results
+        })
+      }]
     };
   } catch (error) {
     logger.error(`Error moving emails: ${error.message}`);
     
     return {
-      status: 'error',
-      message: `Failed to move emails: ${error.message}`
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'error',
+          message: `Failed to move emails: ${error.message}`
+        })
+      }]
     };
   }
 }
@@ -77,29 +124,70 @@ async function moveEmailsHandler(params = {}) {
  * @returns {Promise<Object>} - Move result
  */
 async function moveFolderHandler(params = {}) {
-  const userId = params.userId || 'default';
+  let userId = params.userId;
+  if (!userId) {
+    const users = await listUsers();
+    if (users.length === 0) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'No authenticated users found. Please authenticate first.'
+          })
+        }]
+      };
+    }
+    userId = users.length === 1 ? users[0] : params.userId;
+    if (!userId) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'Multiple users found. Please specify userId parameter.'
+          })
+        }]
+      };
+    }
+  }
   const folderId = params.folderId;
   const destinationFolderId = params.destinationFolderId;
   
   if (!folderId) {
     return {
-      status: 'error',
-      message: 'Folder ID is required'
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'error',
+          message: 'Folder ID is required'
+        })
+      }]
     };
   }
   
   if (!destinationFolderId) {
     return {
-      status: 'error',
-      message: 'Destination parent folder ID is required'
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'error',
+          message: 'Destination parent folder ID is required'
+        })
+      }]
     };
   }
   
   // Check that we're not trying to move to itself
   if (folderId === destinationFolderId) {
     return {
-      status: 'error',
-      message: 'Cannot move a folder to itself'
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'error',
+          message: 'Cannot move a folder to itself'
+        })
+      }]
     };
   }
   
@@ -115,8 +203,13 @@ async function moveFolderHandler(params = {}) {
     
     if (!folder) {
       return {
-        status: 'error',
-        message: 'Source folder not found'
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'Source folder not found'
+          })
+        }]
       };
     }
     
@@ -127,8 +220,13 @@ async function moveFolderHandler(params = {}) {
     
     if (!destinationFolder) {
       return {
-        status: 'error',
-        message: 'Destination folder not found'
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'Destination folder not found'
+          })
+        }]
       };
     }
     
@@ -189,18 +287,28 @@ async function moveFolderHandler(params = {}) {
     await graphClient.delete(`/me/mailFolders/${folderId}`);
     
     return {
-      status: 'success',
-      message: 'Folder moved successfully',
-      newFolderId: newFolder.id,
-      movedMessageCount,
-      movedChildFolderCount
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'success',
+          message: 'Folder moved successfully',
+          newFolderId: newFolder.id,
+          movedMessageCount,
+          movedChildFolderCount
+        })
+      }]
     };
   } catch (error) {
     logger.error(`Error moving folder: ${error.message}`);
     
     return {
-      status: 'error',
-      message: `Failed to move folder: ${error.message}`
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'error',
+          message: `Failed to move folder: ${error.message}`
+        })
+      }]
     };
   }
 }
@@ -211,21 +319,57 @@ async function moveFolderHandler(params = {}) {
  * @returns {Promise<Object>} - Copy result
  */
 async function copyEmailsHandler(params = {}) {
-  const userId = params.userId || 'default';
+  let userId = params.userId;
+  if (!userId) {
+    const users = await listUsers();
+    if (users.length === 0) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'No authenticated users found. Please authenticate first.'
+          })
+        }]
+      };
+    }
+    userId = users.length === 1 ? users[0] : params.userId;
+    if (!userId) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'Multiple users found. Please specify userId parameter.'
+          })
+        }]
+      };
+    }
+  }
   const emailIds = params.emailIds;
   const destinationFolderId = params.destinationFolderId;
   
   if (!emailIds || !Array.isArray(emailIds) || emailIds.length === 0) {
     return {
-      status: 'error',
-      message: 'At least one email ID is required'
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'error',
+          message: 'At least one email ID is required'
+        })
+      }]
     };
   }
   
   if (!destinationFolderId) {
     return {
-      status: 'error',
-      message: 'Destination folder ID is required'
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'error',
+          message: 'Destination folder ID is required'
+        })
+      }]
     };
   }
   
@@ -259,17 +403,27 @@ async function copyEmailsHandler(params = {}) {
     }
     
     return {
-      status: results.failed.length === 0 ? 'success' : 'partial',
-      message: `Copied ${results.success.length} of ${emailIds.length} emails to folder`,
-      destinationFolderId,
-      results
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: results.failed.length === 0 ? 'success' : 'partial',
+          message: `Copied ${results.success.length} of ${emailIds.length} emails to folder`,
+          destinationFolderId,
+          results
+        })
+      }]
     };
   } catch (error) {
     logger.error(`Error copying emails: ${error.message}`);
     
     return {
-      status: 'error',
-      message: `Failed to copy emails: ${error.message}`
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'error',
+          message: `Failed to copy emails: ${error.message}`
+        })
+      }]
     };
   }
 }

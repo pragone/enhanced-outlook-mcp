@@ -1,6 +1,7 @@
 const config = require('../config');
 const logger = require('../utils/logger');
 const { GraphApiClient } = require('../utils/graph-api');
+const { listUsers } = require('../auth/token-manager');
 
 /**
  * List mail rules
@@ -8,7 +9,33 @@ const { GraphApiClient } = require('../utils/graph-api');
  * @returns {Promise<Object>} - List of rules
  */
 async function listRulesHandler(params = {}) {
-  const userId = params.userId || 'default';
+  let userId = params.userId;
+  if (!userId) {
+    const users = await listUsers();
+    if (users.length === 0) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'No authenticated users found. Please authenticate first.'
+          })
+        }]
+      };
+    }
+    userId = users.length === 1 ? users[0] : params.userId;
+    if (!userId) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'Multiple users found. Please specify userId parameter.'
+          })
+        }]
+      };
+    }
+  }
   
   try {
     logger.info(`Listing mail rules for user ${userId}`);
@@ -20,8 +47,13 @@ async function listRulesHandler(params = {}) {
     
     if (!response || !response.value) {
       return {
-        status: 'error',
-        message: 'Failed to retrieve mail rules'
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'Failed to retrieve mail rules'
+          })
+        }]
       };
     }
     
@@ -29,16 +61,26 @@ async function listRulesHandler(params = {}) {
     const rules = response.value.map(rule => formatRuleResponse(rule));
     
     return {
-      status: 'success',
-      count: rules.length,
-      rules
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'success',
+          count: rules.length,
+          rules
+        })
+      }]
     };
   } catch (error) {
     logger.error(`Error listing mail rules: ${error.message}`);
     
     return {
-      status: 'error',
-      message: `Failed to list mail rules: ${error.message}`
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'error',
+          message: `Failed to list mail rules: ${error.message}`
+        })
+      }]
     };
   }
 }
@@ -49,13 +91,44 @@ async function listRulesHandler(params = {}) {
  * @returns {Promise<Object>} - Rule details
  */
 async function getRuleHandler(params = {}) {
-  const userId = params.userId || 'default';
+  let userId = params.userId;
+  if (!userId) {
+    const users = await listUsers();
+    if (users.length === 0) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'No authenticated users found. Please authenticate first.'
+          })
+        }]
+      };
+    }
+    userId = users.length === 1 ? users[0] : params.userId;
+    if (!userId) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'Multiple users found. Please specify userId parameter.'
+          })
+        }]
+      };
+    }
+  }
   const ruleId = params.ruleId;
   
   if (!ruleId) {
     return {
-      status: 'error',
-      message: 'Rule ID is required'
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'error',
+          message: 'Rule ID is required'
+        })
+      }]
     };
   }
   
@@ -69,8 +142,13 @@ async function getRuleHandler(params = {}) {
     
     if (!rule) {
       return {
-        status: 'error',
-        message: `Rule not found with ID: ${ruleId}`
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: `Rule not found with ID: ${ruleId}`
+          })
+        }]
       };
     }
     
@@ -78,15 +156,25 @@ async function getRuleHandler(params = {}) {
     const formattedRule = formatRuleResponse(rule);
     
     return {
-      status: 'success',
-      rule: formattedRule
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'success',
+          rule: formattedRule
+        })
+      }]
     };
   } catch (error) {
     logger.error(`Error getting mail rule: ${error.message}`);
     
     return {
-      status: 'error',
-      message: `Failed to get mail rule: ${error.message}`
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'error',
+          message: `Failed to get mail rule: ${error.message}`
+        })
+      }]
     };
   }
 }

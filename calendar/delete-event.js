@@ -1,6 +1,7 @@
 const config = require('../config');
 const logger = require('../utils/logger');
 const { GraphApiClient } = require('../utils/graph-api');
+const { listUsers } = require('../auth/token-manager');
 
 /**
  * Delete a calendar event
@@ -8,14 +9,30 @@ const { GraphApiClient } = require('../utils/graph-api');
  * @returns {Promise<Object>} - Deletion result
  */
 async function deleteEventHandler(params = {}) {
-  const userId = params.userId || 'default';
+  let userId = params.userId;
+  if (!userId) {
+    const users = await listUsers();
+    if (users.length === 0) {
+      return formatMcpResponse({
+        status: 'error',
+        message: 'No authenticated users found. Please authenticate first.'
+      });
+    }
+    userId = users.length === 1 ? users[0] : params.userId;
+    if (!userId) {
+      return formatMcpResponse({
+        status: 'error',
+        message: 'Multiple users found. Please specify userId parameter.'
+      });
+    }
+  }
   const eventId = params.eventId;
   
   if (!eventId) {
-    return {
+    return formatMcpResponse({
       status: 'error',
       message: 'Event ID is required'
-    };
+    });
   }
   
   try {
@@ -26,18 +43,18 @@ async function deleteEventHandler(params = {}) {
     // Delete the event
     await graphClient.delete(`/me/events/${eventId}`);
     
-    return {
+    return formatMcpResponse({
       status: 'success',
       message: 'Event deleted successfully',
       eventId
-    };
+    });
   } catch (error) {
     logger.error(`Error deleting calendar event: ${error.message}`);
     
-    return {
+    return formatMcpResponse({
       status: 'error',
       message: `Failed to delete calendar event: ${error.message}`
-    };
+    });
   }
 }
 
@@ -47,14 +64,30 @@ async function deleteEventHandler(params = {}) {
  * @returns {Promise<Object>} - Cancellation result
  */
 async function cancelEventHandler(params = {}) {
-  const userId = params.userId || 'default';
+  let userId = params.userId;
+  if (!userId) {
+    const users = await listUsers();
+    if (users.length === 0) {
+      return formatMcpResponse({
+        status: 'error',
+        message: 'No authenticated users found. Please authenticate first.'
+      });
+    }
+    userId = users.length === 1 ? users[0] : params.userId;
+    if (!userId) {
+      return formatMcpResponse({
+        status: 'error',
+        message: 'Multiple users found. Please specify userId parameter.'
+      });
+    }
+  }
   const eventId = params.eventId;
   
   if (!eventId) {
-    return {
+    return formatMcpResponse({
       status: 'error',
       message: 'Event ID is required'
-    };
+    });
   }
   
   try {
@@ -70,18 +103,18 @@ async function cancelEventHandler(params = {}) {
     // Cancel the event (sends cancellation notifications to attendees)
     await graphClient.post(`/me/events/${eventId}/cancel`, cancellationData);
     
-    return {
+    return formatMcpResponse({
       status: 'success',
       message: 'Event cancelled successfully',
       eventId
-    };
+    });
   } catch (error) {
     logger.error(`Error cancelling calendar event: ${error.message}`);
     
-    return {
+    return formatMcpResponse({
       status: 'error',
       message: `Failed to cancel calendar event: ${error.message}`
-    };
+    });
   }
 }
 
@@ -91,7 +124,11 @@ async function cancelEventHandler(params = {}) {
  * @returns {Promise<Object>} - Available meeting times
  */
 async function findMeetingTimesHandler(params = {}) {
-  const userId = params.userId || 'default';
+  let userId = params.userId;
+  if (!userId) {
+    const users = await listUsers();
+    userId = users.length === 1 ? users[0] : 'default';
+  }
   
   try {
     logger.info(`Finding available meeting times for user ${userId}`);
@@ -135,18 +172,18 @@ async function findMeetingTimesHandler(params = {}) {
     // Find meeting times
     const response = await graphClient.post('/me/findMeetingTimes', findTimesRequest);
     
-    return {
+    return formatMcpResponse({
       status: 'success',
       meetingTimeSuggestions: response.meetingTimeSuggestions || [],
       emptySuggestionsReason: response.emptySuggestionsReason
-    };
+    });
   } catch (error) {
     logger.error(`Error finding meeting times: ${error.message}`);
     
-    return {
+    return formatMcpResponse({
       status: 'error',
       message: `Failed to find meeting times: ${error.message}`
-    };
+    });
   }
 }
 
@@ -228,6 +265,22 @@ function formatAttendees(attendees) {
       type: 'required'
     };
   });
+}
+
+/**
+ * Format response for MCP
+ * @param {Object} data - Response data
+ * @returns {Object} - MCP formatted response
+ */
+function formatMcpResponse(data) {
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(data)
+      }
+    ]
+  };
 }
 
 module.exports = {

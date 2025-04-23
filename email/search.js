@@ -1,6 +1,7 @@
 const config = require('../config');
 const logger = require('../utils/logger');
 const { GraphApiClient } = require('../utils/graph-api');
+const { listUsers } = require('../auth/token-manager');
 const { buildQueryParams } = require('../utils/odata-helpers');
 
 /**
@@ -9,39 +10,194 @@ const { buildQueryParams } = require('../utils/odata-helpers');
  * @returns {Promise<Object>} - Search results
  */
 async function searchEmailsHandler(params = {}) {
-  const userId = params.userId || 'default';
-  const query = params.query;
-  
-  if (!query) {
-    return {
-      status: 'error',
-      message: 'Search query is required'
-    };
-  }
-  
-  const limit = Math.min(
-    params.limit || config.email.maxEmailsPerRequest, 
-    config.email.maxEmailsPerRequest
-  );
-  
   try {
+    // Super detailed debugging
+    logger.info(`SEARCH EMAILS HANDLER START ------------------------------------`);
+    logger.info(`Raw params: ${JSON.stringify(params)}`);
+    
+    // CRITICAL FIX FOR CLAUDE DESKTOP:
+    // Check if this is a direct JSON-RPC request with the tool call format
+    if (global.__last_message?.method === 'tools/call' && 
+        global.__last_message?.params?.name === 'search_emails' &&
+        global.__last_message?.params?.arguments) {
+      
+      const directArgs = global.__last_message.params.arguments;
+      logger.info(`Found direct JSON-RPC arguments: ${JSON.stringify(directArgs)}`);
+      
+      // Use the arguments directly from the JSON-RPC request
+      if (directArgs.query) {
+        params = directArgs;
+        logger.info(`Using direct JSON-RPC arguments for search_emails`);
+      }
+    }
+    
+    // Check for raw message in params
+    const rawMessage = params.__raw_message;
+    if (rawMessage) {
+      logger.info(`Found raw message in params: ${JSON.stringify(rawMessage)}`);
+    }
+    
+    // Try all possible sources of parameters
+    let requestParams = {};
+    
+    // Order of preference for parameter sources:
+    // 1. Direct params
+    // 2. params.arguments
+    // 3. Raw message params.arguments
+    // 4. params.contextData (Claude Desktop might use this)
+    // 5. Global last message
+    
+    if (params.query) {
+      // Use direct params
+      requestParams = params;
+      logger.info(`Using direct params`);
+    } else if (params.arguments) {
+      // Use params.arguments
+      requestParams = typeof params.arguments === 'object' ? params.arguments : params;
+      logger.info(`Using params.arguments`);
+      
+      // Check if arguments is a string containing JSON
+      if (typeof params.arguments === 'string') {
+        try {
+          const parsedArgs = JSON.parse(params.arguments);
+          if (parsedArgs && typeof parsedArgs === 'object') {
+            requestParams = parsedArgs;
+            logger.info(`Parsed string arguments into object: ${JSON.stringify(parsedArgs)}`);
+          }
+        } catch (e) {
+          logger.info(`Arguments string is not valid JSON: ${params.arguments}`);
+        }
+      }
+    } else if (rawMessage?.params?.arguments) {
+      // Use raw message params
+      requestParams = rawMessage.params.arguments;
+      logger.info(`Using raw message params`);
+    } else if (params.contextData) {
+      // Try to use contextData (sometimes used by Claude Desktop)
+      requestParams = params.contextData;
+      logger.info(`Using params.contextData: ${JSON.stringify(params.contextData)}`);
+    } else if (params.signal) {
+      // Handle Claude Desktop format - try to extract parameters from request
+      logger.info(`Detected Claude Desktop format with signal property`);
+      
+      // Check if params has any properties that might be the search query
+      for (const key in params) {
+        // Skip known non-query properties
+        if (['signal', 'tool'].includes(key)) continue;
+        
+        const value = params[key];
+        if (typeof value === 'string' && value.length > 0) {
+          // This could be a search query
+          logger.info(`Found potential search query in property ${key}: ${value}`);
+          requestParams.query = value;
+          break;
+        }
+        
+        // Check if value is an object that might contain the query
+        if (typeof value === 'object' && value !== null) {
+          for (const subKey in value) {
+            if (['query', 'q', 'search'].includes(subKey)) {
+              logger.info(`Found search query in nested property ${key}.${subKey}: ${value[subKey]}`);
+              requestParams.query = value[subKey];
+              break;
+            }
+          }
+        }
+      }
+      
+      // Check for query saved in global context
+      if (!requestParams.query && global._claude_last_search_query) {
+        logger.info(`Using search query from global context: ${global._claude_last_search_query}`);
+        requestParams.query = global._claude_last_search_query;
+      }
+    } else if (global.__last_message?.params?.arguments) {
+      // Use global last message
+      requestParams = global.__last_message.params.arguments;
+      logger.info(`Using global last message params`);
+    } else {
+      // Last resort - check globals directly for previous search query
+      if (global._claude_last_search_query) {
+        requestParams.query = global._claude_last_search_query;
+        logger.info(`Using _claude_last_search_query from global context: ${global._claude_last_search_query}`);
+      }
+    }
+    
+    logger.info(`Request params extracted: ${JSON.stringify(requestParams)}`);
+    
+    // Extract userId
+    let userId = requestParams.userId;
+    logger.info(`Extracted userId: ${userId}`);
+    
+    // Extract query and ensure we have one
+    const query = requestParams.query || '';
+    logger.info(`Extracted query: ${query}`);
+    
+    // Store search query in global context for potential future use
+    if (query) {
+      global._claude_last_search_query = query;
+    }
+    
+    if (!userId) {
+      const users = await listUsers();
+      if (users.length === 0) {
+        return {
+          content: [{
+            type: "text", 
+            text: JSON.stringify({
+              status: 'error',
+              message: 'No authenticated users found. Please authenticate first.'
+            })
+          }]
+        };
+      }
+      userId = users.length === 1 ? users[0] : requestParams.userId;
+      if (!userId) {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              status: 'error',
+              message: 'Multiple users found. Please specify userId parameter to indicate which account to use.'
+            })
+          }]
+        };
+      }
+    }
+    
+    if (!query) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'query parameter is required'
+          })
+        }]
+      };
+    }
+    
+    const limit = Math.min(
+      requestParams.limit || config.email.maxEmailsPerRequest, 
+      config.email.maxEmailsPerRequest
+    );
+    
     logger.info(`Searching emails for user ${userId} with query: ${query}`);
     
     const graphClient = new GraphApiClient(userId);
     
     // Build query parameters
     const queryParams = buildQueryParams({
-      select: params.fields || config.email.defaultFields,
+      select: requestParams.fields || config.email.defaultFields,
       top: limit,
       search: query,
-      orderBy: params.orderBy || { receivedDateTime: 'desc' }
+      orderBy: requestParams.orderBy || { receivedDateTime: 'desc' }
     });
     
     // Perform email search
     // Microsoft Graph allows searching across all folders with /me/messages endpoint
     const endpoint = '/me/messages';
     const emails = await graphClient.getPaginated(endpoint, queryParams, {
-      maxPages: params.maxPages || 1
+      maxPages: requestParams.maxPages || 1
     });
     
     // Group results by folder for better organization
@@ -66,18 +222,28 @@ async function searchEmailsHandler(params = {}) {
     }
     
     return {
-      status: 'success',
-      query,
-      totalResults: emails.length,
-      folderResults: Object.values(folderGroups),
-      hasMore: emails.length >= limit
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'success',
+          query,
+          totalResults: emails.length,
+          folderResults: Object.values(folderGroups),
+          hasMore: emails.length >= limit
+        })
+      }]
     };
   } catch (error) {
     logger.error(`Error searching emails: ${error.message}`);
     
     return {
-      status: 'error',
-      message: `Failed to search emails: ${error.message}`
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'error',
+          message: `Failed to search emails: ${error.message}`
+        })
+      }]
     };
   }
 }

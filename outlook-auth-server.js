@@ -6,6 +6,7 @@ const open = require('open');
 const config = require('./config');
 const logger = require('./utils/logger');
 const { saveToken } = require('./auth/token-manager');
+const axios = require('axios');
 
 // Create Express app
 const app = express();
@@ -122,12 +123,41 @@ app.get('/auth/callback', async (req, res) => {
 
 // Initiate authentication endpoint
 app.post('/auth/start', async (req, res) => {
+  logger.info('==== AUTH SERVER DEBUG START ====');
+  logger.info(`Auth start request received. Body: ${JSON.stringify(req.body)}`);
+  logger.info(`Auth start request headers: ${JSON.stringify(req.headers)}`);
+  
   const { clientId, scopes, redirectUri, state = 'default' } = req.body;
   
-  // Validate required parameters
-  if (!clientId || !scopes || !redirectUri) {
+  // Log request details
+  logger.info(`Auth start request received: clientId=${clientId}, redirectUri=${redirectUri}, state=${state}`);
+  logger.info(`Requested scopes: ${JSON.stringify(scopes)}`);
+  
+  // More detailed validation
+  const validationErrors = [];
+  if (!clientId) validationErrors.push('Missing clientId');
+  if (!scopes) validationErrors.push('Missing scopes');
+  if (!redirectUri) validationErrors.push('Missing redirectUri');
+  
+  if (validationErrors.length > 0) {
+    const errorMessage = `Missing required parameters: ${validationErrors.join(', ')}`;
+    logger.error(errorMessage);
+    logger.error(`clientId=${!!clientId}, scopes=${!!scopes}, redirectUri=${!!redirectUri}`);
+    
+    logger.info('==== AUTH SERVER DEBUG END ====');
     return res.status(400).json({
-      error: 'Missing required authentication parameters'
+      error: errorMessage
+    });
+  }
+  
+  // Validate the redirectUri format
+  try {
+    new URL(redirectUri);
+  } catch (e) {
+    logger.error(`Invalid redirectUri format: ${redirectUri}`);
+    logger.info('==== AUTH SERVER DEBUG END ====');
+    return res.status(400).json({
+      error: 'Invalid redirectUri format'
     });
   }
   
@@ -140,28 +170,50 @@ app.post('/auth/start', async (req, res) => {
   io.emit('authStatus', authState);
   
   // Construct the Microsoft OAuth URL
-  const scopesParam = encodeURIComponent(scopes.join(' '));
-  const authUrl = `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=${clientId}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${scopesParam}&response_mode=query&state=${state}`;
-  
-  logger.info(`Starting authentication flow with state: ${state}`);
-  
-  // Open the browser for authentication
   try {
-    await open(authUrl);
-    res.json({ status: 'authentication_started', authUrl });
-  } catch (err) {
-    logger.error('Failed to open browser:', err);
+    const scopesParam = encodeURIComponent(Array.isArray(scopes) ? scopes.join(' ') : scopes);
+    const encodedRedirectUri = encodeURIComponent(redirectUri);
+    const authUrl = `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=${clientId}&response_type=code&redirect_uri=${encodedRedirectUri}&scope=${scopesParam}&response_mode=query&state=${state}`;
+    
+    logger.info(`Starting authentication flow with state: ${state}`);
+    logger.info(`Authentication URL: ${authUrl}`);
+    
+    // Open the browser for authentication
+    try {
+      await open(authUrl);
+      logger.info('Browser opened successfully with auth URL');
+      logger.info('==== AUTH SERVER DEBUG END ====');
+      res.json({ status: 'authentication_started', authUrl });
+    } catch (err) {
+      logger.error('Failed to open browser:', err);
+      
+      authState = {
+        isAuthenticating: false,
+        userId: null,
+        error: `Failed to open browser: ${err.message}`
+      };
+      io.emit('authStatus', authState);
+      
+      logger.info('==== AUTH SERVER DEBUG END ====');
+      res.status(500).json({
+        error: 'Failed to open browser for authentication',
+        authUrl // Return the URL so it can be manually opened
+      });
+    }
+  } catch (error) {
+    logger.error(`Error constructing auth URL: ${error.message}`);
+    logger.error(error.stack);
     
     authState = {
       isAuthenticating: false,
       userId: null,
-      error: `Failed to open browser: ${err.message}`
+      error: `Error constructing auth URL: ${error.message}`
     };
     io.emit('authStatus', authState);
     
+    logger.info('==== AUTH SERVER DEBUG END ====');
     res.status(500).json({
-      error: 'Failed to open browser for authentication',
-      authUrl // Return the URL so it can be manually opened
+      error: `Error constructing auth URL: ${error.message}`
     });
   }
 });
@@ -176,26 +228,118 @@ server.listen(config.server.authPort, () => {
   logger.info(`Authentication server running on port ${config.server.authPort}`);
 });
 
-// Mock function for token exchange - would need to be implemented
-// with actual Microsoft Graph API token endpoints
+// Exchange authorization code for token
 async function exchangeCodeForToken(code, state) {
-  // This would be implemented with actual token exchange logic
-  // using the Microsoft Identity platform
-  logger.info(`Exchanging code for token with state: ${state}`);
+  if (!code) {
+    logger.error('Authorization code is missing');
+    throw new Error('Authorization code is required');
+  }
   
-  // For the purposes of this example, we'll mock a successful token response
-  const mockTokenResponse = {
-    access_token: 'mock_access_token',
-    refresh_token: 'mock_refresh_token',
-    id_token: 'mock_id_token',
-    expires_in: 3600
-  };
-  
-  // Extract user information from ID token
-  const userId = 'mock_user_id'; // Would be extracted from the decoded ID token
-  
-  // Save the token using the token manager
-  await saveToken(userId, mockTokenResponse);
-  
-  return { userId };
+  try {
+    logger.info(`Exchanging code for token with state: ${state}`);
+    logger.info(`Configured redirectUri: ${config.microsoft.redirectUri}`);
+    
+    // Log if client secret is present (without revealing it)
+    if (!process.env.MS_CLIENT_SECRET) {
+      logger.warn('MS_CLIENT_SECRET environment variable is missing');
+    } else {
+      logger.info('MS_CLIENT_SECRET is present');
+    }
+    
+    // Prepare token request parameters
+    const tokenParams = {
+      client_id: config.microsoft.clientId,
+      client_secret: process.env.MS_CLIENT_SECRET,
+      code: code,
+      redirect_uri: config.microsoft.redirectUri,
+      grant_type: 'authorization_code'
+    };
+    
+    logger.info(`Token request parameters: client_id=${tokenParams.client_id}, redirect_uri=${tokenParams.redirect_uri}, grant_type=${tokenParams.grant_type}`);
+    
+    // Make token request to Microsoft identity platform
+    logger.info('Sending token request to Microsoft identity platform...');
+    const response = await axios.post(
+      'https://login.microsoftonline.com/common/oauth2/v2.0/token',
+      new URLSearchParams(tokenParams),
+      {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        }
+      }
+    );
+    
+    logger.info('Token request successful');
+    logger.info(`Token response status: ${response.status}`);
+    logger.info(`Token response includes: ${Object.keys(response.data).join(', ')}`);
+    
+    const tokenData = response.data;
+    
+    // Calculate expiration time
+    const expiresIn = tokenData.expires_in || 3600;
+    const expiresAt = Date.now() + expiresIn * 1000;
+    
+    // Extract user information from ID token
+    let userId;
+    if (state !== 'default') {
+      userId = state;
+    } else {
+      try {
+        // Decode the JWT token to get user information
+        const idTokenParts = tokenData.id_token.split('.');
+        if (idTokenParts.length !== 3) {
+          throw new Error('Invalid ID token format');
+        }
+        
+        // Decode the payload (second part)
+        const payload = JSON.parse(Buffer.from(idTokenParts[1], 'base64').toString());
+        
+        // Use the user's email as the ID if available, otherwise use preferred_username
+        userId = payload.email || payload.preferred_username;
+        
+        if (!userId) {
+          throw new Error('Could not extract user identifier from ID token');
+        }
+        
+        logger.info(`Extracted user ID from token: ${userId}`);
+      } catch (error) {
+        logger.error(`Error decoding ID token: ${error.message}`);
+        throw new Error(`Failed to extract user identifier: ${error.message}`);
+      }
+    }
+    
+    // Create complete token data
+    const completeTokenData = {
+      access_token: tokenData.access_token,
+      refresh_token: tokenData.refresh_token,
+      id_token: tokenData.id_token,
+      expires_in: expiresIn,
+      expires_at: expiresAt,
+      scope: tokenData.scope,
+      token_type: tokenData.token_type || 'Bearer'
+    };
+    
+    // Save token
+    logger.info(`Saving token for user: ${userId}`);
+    await saveToken(userId, completeTokenData);
+    logger.info('Token saved successfully');
+    
+    return { userId };
+  } catch (error) {
+    logger.error(`Token exchange error: ${error.message}`);
+    
+    // Log more detailed error information
+    if (error.response) {
+      logger.error(`Error response status: ${error.response.status}`);
+      logger.error(`Error response headers: ${JSON.stringify(error.response.headers)}`);
+      logger.error(`Error response data: ${JSON.stringify(error.response.data)}`);
+    } else if (error.request) {
+      logger.error('No response received from server');
+      logger.error(`Request details: ${error.request._header || JSON.stringify(error.request)}`);
+    } else {
+      logger.error(`Error details: ${error.stack}`);
+    }
+    
+    throw new Error(`Failed to exchange code for token: ${error.message}`);
+  }
 }

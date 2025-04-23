@@ -1,6 +1,7 @@
 const config = require('../config');
 const logger = require('../utils/logger');
 const { GraphApiClient } = require('../utils/graph-api');
+const { listUsers } = require('../auth/token-manager');
 
 /**
  * Get attachment content from an email
@@ -8,25 +9,61 @@ const { GraphApiClient } = require('../utils/graph-api');
  * @returns {Promise<Object>} - Attachment content
  */
 async function getAttachmentHandler(params = {}) {
-  const userId = params.userId || 'default';
-  const emailId = params.emailId;
-  const attachmentId = params.attachmentId;
-  
-  if (!emailId) {
-    return {
-      status: 'error',
-      message: 'Email ID is required'
-    };
-  }
-  
-  if (!attachmentId) {
-    return {
-      status: 'error',
-      message: 'Attachment ID is required'
-    };
-  }
-  
   try {
+    let userId = params.userId;
+    if (!userId) {
+      const users = await listUsers();
+      if (users.length === 0) {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              status: 'error',
+              message: 'No authenticated users found. Please authenticate first.'
+            })
+          }]
+        };
+      }
+      userId = users.length === 1 ? users[0] : params.userId;
+      if (!userId) {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              status: 'error',
+              message: 'Multiple users found. Please specify userId parameter to indicate which account to use.'
+            })
+          }]
+        };
+      }
+    }
+    const emailId = params.emailId;
+    const attachmentId = params.attachmentId;
+    
+    if (!emailId) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'Email ID is required'
+          })
+        }]
+      };
+    }
+    
+    if (!attachmentId) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'Attachment ID is required'
+          })
+        }]
+      };
+    }
+    
     logger.info(`Getting attachment ${attachmentId} from email ${emailId} for user ${userId}`);
     
     const graphClient = new GraphApiClient(userId);
@@ -36,8 +73,13 @@ async function getAttachmentHandler(params = {}) {
     
     if (!attachment) {
       return {
-        status: 'error',
-        message: 'Attachment not found'
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'Attachment not found'
+          })
+        }]
       };
     }
     
@@ -69,15 +111,25 @@ async function getAttachmentHandler(params = {}) {
     }
     
     return {
-      status: 'success',
-      attachment: formattedAttachment
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'success',
+          attachment: formattedAttachment
+        })
+      }]
     };
   } catch (error) {
     logger.error(`Error getting attachment: ${error.message}`);
     
     return {
-      status: 'error',
-      message: `Failed to get attachment: ${error.message}`
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'error',
+          message: `Failed to get attachment: ${error.message}`
+        })
+      }]
     };
   }
 }
@@ -88,17 +140,48 @@ async function getAttachmentHandler(params = {}) {
  * @returns {Promise<Object>} - List of attachments
  */
 async function listAttachmentsHandler(params = {}) {
-  const userId = params.userId || 'default';
-  const emailId = params.emailId;
-  
-  if (!emailId) {
-    return {
-      status: 'error',
-      message: 'Email ID is required'
-    };
-  }
-  
   try {
+    let userId = params.userId;
+    if (!userId) {
+      const users = await listUsers();
+      if (users.length === 0) {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              status: 'error',
+              message: 'No authenticated users found. Please authenticate first.'
+            })
+          }]
+        };
+      }
+      userId = users.length === 1 ? users[0] : params.userId;
+      if (!userId) {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              status: 'error',
+              message: 'Multiple users found. Please specify userId parameter to indicate which account to use.'
+            })
+          }]
+        };
+      }
+    }
+    const emailId = params.emailId;
+    
+    if (!emailId) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'Email ID is required'
+          })
+        }]
+      };
+    }
+    
     logger.info(`Listing attachments for email ${emailId} for user ${userId}`);
     
     const graphClient = new GraphApiClient(userId);
@@ -108,8 +191,13 @@ async function listAttachmentsHandler(params = {}) {
     
     if (!response || !response.value) {
       return {
-        status: 'error',
-        message: 'Failed to retrieve attachments'
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'Failed to retrieve attachments'
+          })
+        }]
       };
     }
     
@@ -125,17 +213,27 @@ async function listAttachmentsHandler(params = {}) {
     }));
     
     return {
-      status: 'success',
-      emailId,
-      count: attachments.length,
-      attachments
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'success',
+          emailId,
+          count: attachments.length,
+          attachments
+        })
+      }]
     };
   } catch (error) {
     logger.error(`Error listing attachments: ${error.message}`);
     
     return {
-      status: 'error',
-      message: `Failed to list attachments: ${error.message}`
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'error',
+          message: `Failed to list attachments: ${error.message}`
+        })
+      }]
     };
   }
 }
@@ -146,31 +244,72 @@ async function listAttachmentsHandler(params = {}) {
  * @returns {Promise<Object>} - Attachment result
  */
 async function addAttachmentHandler(params = {}) {
-  const userId = params.userId || 'default';
-  const emailId = params.emailId;
-  
-  if (!emailId) {
-    return {
-      status: 'error',
-      message: 'Email ID is required'
-    };
-  }
-  
-  if (!params.name) {
-    return {
-      status: 'error',
-      message: 'Attachment name is required'
-    };
-  }
-  
-  if (!params.contentBytes && !params.contentUrl) {
-    return {
-      status: 'error',
-      message: 'Either contentBytes or contentUrl is required'
-    };
-  }
-  
   try {
+    let userId = params.userId;
+    if (!userId) {
+      const users = await listUsers();
+      if (users.length === 0) {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              status: 'error',
+              message: 'No authenticated users found. Please authenticate first.'
+            })
+          }]
+        };
+      }
+      userId = users.length === 1 ? users[0] : params.userId;
+      if (!userId) {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              status: 'error',
+              message: 'Multiple users found. Please specify userId parameter to indicate which account to use.'
+            })
+          }]
+        };
+      }
+    }
+    const emailId = params.emailId;
+    
+    if (!emailId) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'Email ID is required'
+          })
+        }]
+      };
+    }
+    
+    if (!params.name) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'Attachment name is required'
+          })
+        }]
+      };
+    }
+    
+    if (!params.contentBytes && !params.contentUrl) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'Either contentBytes or contentUrl is required'
+          })
+        }]
+      };
+    }
+    
     logger.info(`Adding attachment to email ${emailId} for user ${userId}`);
     
     const graphClient = new GraphApiClient(userId);
@@ -196,18 +335,27 @@ async function addAttachmentHandler(params = {}) {
     const attachment = await graphClient.post(`/me/messages/${emailId}/attachments`, attachmentData);
     
     return {
-      status: 'success',
-      message: 'Attachment added successfully',
-      emailId,
-      attachmentId: attachment.id,
-      attachmentName: params.name
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'success',
+          message: 'Attachment added successfully',
+          emailId,
+          attachmentId: attachment.id
+        })
+      }]
     };
   } catch (error) {
     logger.error(`Error adding attachment: ${error.message}`);
     
     return {
-      status: 'error',
-      message: `Failed to add attachment: ${error.message}`
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'error',
+          message: `Failed to add attachment: ${error.message}`
+        })
+      }]
     };
   }
 }
@@ -218,44 +366,195 @@ async function addAttachmentHandler(params = {}) {
  * @returns {Promise<Object>} - Deletion result
  */
 async function deleteAttachmentHandler(params = {}) {
-  const userId = params.userId || 'default';
-  const emailId = params.emailId;
-  const attachmentId = params.attachmentId;
-  
-  if (!emailId) {
-    return {
-      status: 'error',
-      message: 'Email ID is required'
-    };
-  }
-  
-  if (!attachmentId) {
-    return {
-      status: 'error',
-      message: 'Attachment ID is required'
-    };
-  }
-  
   try {
+    let userId = params.userId;
+    if (!userId) {
+      const users = await listUsers();
+      if (users.length === 0) {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              status: 'error',
+              message: 'No authenticated users found. Please authenticate first.'
+            })
+          }]
+        };
+      }
+      userId = users.length === 1 ? users[0] : params.userId;
+      if (!userId) {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              status: 'error',
+              message: 'Multiple users found. Please specify userId parameter to indicate which account to use.'
+            })
+          }]
+        };
+      }
+    }
+    const emailId = params.emailId;
+    const attachmentId = params.attachmentId;
+    
+    if (!emailId) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'Email ID is required'
+          })
+        }]
+      };
+    }
+    
+    if (!attachmentId) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'Attachment ID is required'
+          })
+        }]
+      };
+    }
+    
     logger.info(`Deleting attachment ${attachmentId} from email ${emailId} for user ${userId}`);
     
     const graphClient = new GraphApiClient(userId);
     
-    // Delete the attachment
+    // Delete attachment
     await graphClient.delete(`/me/messages/${emailId}/attachments/${attachmentId}`);
     
     return {
-      status: 'success',
-      message: 'Attachment deleted successfully',
-      emailId,
-      attachmentId
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'success',
+          message: 'Attachment deleted successfully',
+          emailId,
+          attachmentId
+        })
+      }]
     };
   } catch (error) {
     logger.error(`Error deleting attachment: ${error.message}`);
     
     return {
-      status: 'error',
-      message: `Failed to delete attachment: ${error.message}`
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'error',
+          message: `Failed to delete attachment: ${error.message}`
+        })
+      }]
+    };
+  }
+}
+
+/**
+ * Handler to get email attachments
+ * @param {Object} params - Tool parameters
+ * @returns {Promise<Object>} - Response with status and attachment data
+ */
+async function getAttachmentsHandler(params = {}) {
+  try {
+    let userId = params.userId;
+    const messageId = params.messageId;
+    
+    if (!userId) {
+      const users = await listUsers();
+      if (users.length === 0) {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              status: 'error',
+              message: 'No authenticated users found. Please authenticate first.'
+            })
+          }]
+        };
+      }
+      userId = users.length === 1 ? users[0] : params.userId;
+      if (!userId) {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              status: 'error',
+              message: 'Multiple users found. Please specify userId parameter to indicate which account to use.'
+            })
+          }]
+        };
+      }
+    }
+    
+    if (!messageId) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'messageId parameter is required'
+          })
+        }]
+      };
+    }
+    
+    logger.info(`Getting attachments for message ${messageId} for user ${userId}`);
+    
+    const graphClient = new GraphApiClient(userId);
+    
+    // Get attachments
+    const response = await graphClient.get(`/me/messages/${messageId}/attachments`);
+    
+    if (!response || !response.value) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'Failed to retrieve attachments'
+          })
+        }]
+      };
+    }
+    
+    // Format the attachments
+    const attachments = response.value.map(attachment => ({
+      id: attachment.id,
+      name: attachment.name,
+      contentType: attachment.contentType,
+      size: attachment.size,
+      isInline: attachment.isInline,
+      lastModifiedDateTime: attachment.lastModifiedDateTime,
+      attachmentType: attachment['@odata.type']?.replace('#microsoft.graph.', '')
+    }));
+    
+    return {
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'success',
+          messageId,
+          count: attachments.length,
+          attachments
+        })
+      }]
+    };
+  } catch (error) {
+    logger.error(`Error getting attachments: ${error.message}`);
+    
+    return {
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'error',
+          message: `Failed to get attachments: ${error.message}`
+        })
+      }]
     };
   }
 }
@@ -264,5 +563,6 @@ module.exports = {
   getAttachmentHandler,
   listAttachmentsHandler,
   addAttachmentHandler,
-  deleteAttachmentHandler
+  deleteAttachmentHandler,
+  getAttachmentsHandler
 };

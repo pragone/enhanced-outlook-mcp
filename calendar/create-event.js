@@ -1,6 +1,7 @@
 const config = require('../config');
 const logger = require('../utils/logger');
 const { GraphApiClient } = require('../utils/graph-api');
+const { listUsers } = require('../auth/token-manager');
 
 /**
  * Create a new calendar event
@@ -8,42 +9,63 @@ const { GraphApiClient } = require('../utils/graph-api');
  * @returns {Promise<Object>} - Creation result
  */
 async function createEventHandler(params = {}) {
-  const userId = params.userId || 'default';
-  const calendarId = params.calendarId || 'primary';
+  let userId = params.userId;
+  if (!userId) {
+    const users = await listUsers();
+    if (users.length === 0) {
+      return formatMcpResponse({
+        status: 'error',
+        message: 'No authenticated users found. Please authenticate first.'
+      });
+    }
+    userId = users.length === 1 ? users[0] : params.userId;
+    if (!userId) {
+      return formatMcpResponse({
+        status: 'error',
+        message: 'Multiple users found. Please specify userId parameter.'
+      });
+    }
+  }
+  const calendarId = params.calendarId || params.calendar_id || 'primary';
+  
+  // Normalize parameters - account for both naming conventions
+  const startTime = params.start || params.start_time;
+  const endTime = params.end || params.end_time;
+  const subject = params.subject || params.summary;
   
   // Check required parameters
-  if (!params.subject) {
-    return {
+  if (!subject) {
+    return formatMcpResponse({
       status: 'error',
       message: 'Event subject is required'
-    };
+    });
   }
   
-  if (!params.start) {
-    return {
+  if (!startTime) {
+    return formatMcpResponse({
       status: 'error',
       message: 'Event start time is required'
-    };
+    });
   }
   
   try {
-    logger.info(`Creating calendar event "${params.subject}" for user ${userId}`);
+    logger.info(`Creating calendar event "${subject}" for user ${userId}`);
     
     const graphClient = new GraphApiClient(userId);
     
     // Prepare event data
     const eventData = {
-      subject: params.subject,
+      subject: subject,
       body: {
         contentType: params.bodyType || 'HTML',
         content: params.body || ''
       },
       start: {
-        dateTime: params.start,
+        dateTime: startTime,
         timeZone: params.timeZone || 'UTC'
       },
       end: {
-        dateTime: params.end || getDefaultEndTime(params.start),
+        dateTime: endTime || getDefaultEndTime(startTime),
         timeZone: params.timeZone || 'UTC'
       },
       location: formatLocation(params.location),
@@ -74,19 +96,19 @@ async function createEventHandler(params = {}) {
     
     const event = await graphClient.post(endpoint, eventData);
     
-    return {
+    return formatMcpResponse({
       status: 'success',
       message: 'Event created successfully',
       eventId: event.id,
       webLink: event.webLink
-    };
+    });
   } catch (error) {
     logger.error(`Error creating calendar event: ${error.message}`);
     
-    return {
+    return formatMcpResponse({
       status: 'error',
       message: `Failed to create calendar event: ${error.message}`
-    };
+    });
   }
 }
 
@@ -211,6 +233,22 @@ function formatAttendees(attendees) {
       type: 'required'
     };
   });
+}
+
+/**
+ * Format response for MCP
+ * @param {Object} data - Response data
+ * @returns {Object} - MCP formatted response
+ */
+function formatMcpResponse(data) {
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(data)
+      }
+    ]
+  };
 }
 
 module.exports = {

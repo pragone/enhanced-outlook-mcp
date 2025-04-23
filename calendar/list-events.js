@@ -1,6 +1,7 @@
 const config = require('../config');
 const logger = require('../utils/logger');
 const { GraphApiClient } = require('../utils/graph-api');
+const { listUsers } = require('../auth/token-manager');
 const { buildQueryParams } = require('../utils/odata-helpers');
 
 /**
@@ -9,12 +10,40 @@ const { buildQueryParams } = require('../utils/odata-helpers');
  * @returns {Promise<Object>} - List of events
  */
 async function listEventsHandler(params = {}) {
-  const userId = params.userId || 'default';
-  const calendarId = params.calendarId || 'primary';
+  let userId = params.userId;
+  if (!userId) {
+    const users = await listUsers();
+    if (users.length === 0) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'No authenticated users found. Please authenticate first.'
+          })
+        }]
+      };
+    }
+    userId = users.length === 1 ? users[0] : params.userId;
+    if (!userId) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'Multiple users found. Please specify userId parameter.'
+          })
+        }]
+      };
+    }
+  }
+  
+  // Accept both naming conventions for parameters
+  const calendarId = params.calendarId || params.calendar_id || 'primary';
   
   // Get date range (default to current month)
-  let startDateTime = params.startDateTime;
-  let endDateTime = params.endDateTime;
+  let startDateTime = params.startDateTime || params.start_date;
+  let endDateTime = params.endDateTime || params.end_date;
   
   if (!startDateTime) {
     const now = new Date();
@@ -50,7 +79,7 @@ async function listEventsHandler(params = {}) {
     const queryParams = buildQueryParams({
       select: params.fields || config.calendar.defaultFields,
       top: limit,
-      orderBy: { start: 'asc' },
+      orderBy: 'start/dateTime asc',
       filter: params.filter
     });
     
@@ -64,19 +93,29 @@ async function listEventsHandler(params = {}) {
     });
     
     return {
-      status: 'success',
-      startDateTime,
-      endDateTime,
-      calendarId,
-      count: events.length,
-      events: events.map(formatEventResponse)
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'success',
+          startDateTime,
+          endDateTime,
+          calendarId,
+          count: events.length,
+          events: events.map(formatEventResponse)
+        })
+      }]
     };
   } catch (error) {
     logger.error(`Error listing calendar events: ${error.message}`);
     
     return {
-      status: 'error',
-      message: `Failed to list calendar events: ${error.message}`
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'error',
+          message: `Failed to list calendar events: ${error.message}`
+        })
+      }]
     };
   }
 }
@@ -87,13 +126,44 @@ async function listEventsHandler(params = {}) {
  * @returns {Promise<Object>} - Event details
  */
 async function getEventHandler(params = {}) {
-  const userId = params.userId || 'default';
-  const eventId = params.eventId;
+  let userId = params.userId;
+  if (!userId) {
+    const users = await listUsers();
+    if (users.length === 0) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'No authenticated users found. Please authenticate first.'
+          })
+        }]
+      };
+    }
+    userId = users.length === 1 ? users[0] : params.userId;
+    if (!userId) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'Multiple users found. Please specify userId parameter.'
+          })
+        }]
+      };
+    }
+  }
+  const eventId = params.eventId || params.event_id;
   
   if (!eventId) {
     return {
-      status: 'error',
-      message: 'Event ID is required'
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'error',
+          message: 'Event ID is required'
+        })
+      }]
     };
   }
   
@@ -107,21 +177,36 @@ async function getEventHandler(params = {}) {
     
     if (!event) {
       return {
-        status: 'error',
-        message: `Event not found with ID: ${eventId}`
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: `Event not found with ID: ${eventId}`
+          })
+        }]
       };
     }
     
     return {
-      status: 'success',
-      event: formatEventResponse(event)
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'success',
+          event: formatEventResponse(event)
+        })
+      }]
     };
   } catch (error) {
     logger.error(`Error getting calendar event: ${error.message}`);
     
     return {
-      status: 'error',
-      message: `Failed to get calendar event: ${error.message}`
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'error',
+          message: `Failed to get calendar event: ${error.message}`
+        })
+      }]
     };
   }
 }
@@ -132,7 +217,33 @@ async function getEventHandler(params = {}) {
  * @returns {Promise<Object>} - List of calendars
  */
 async function listCalendarsHandler(params = {}) {
-  const userId = params.userId || 'default';
+  let userId = params.userId || params.user_id;
+  if (!userId) {
+    const users = await listUsers();
+    if (users.length === 0) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'No authenticated users found. Please authenticate first.'
+          })
+        }]
+      };
+    }
+    userId = users.length === 1 ? users[0] : params.userId;
+    if (!userId) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'Multiple users found. Please specify userId parameter.'
+          })
+        }]
+      };
+    }
+  }
   
   try {
     logger.info(`Listing calendars for user ${userId}`);
@@ -144,8 +255,13 @@ async function listCalendarsHandler(params = {}) {
     
     if (!response || !response.value) {
       return {
-        status: 'error',
-        message: 'Failed to retrieve calendars'
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: 'Failed to retrieve calendars'
+          })
+        }]
       };
     }
     
@@ -165,16 +281,26 @@ async function listCalendarsHandler(params = {}) {
     }));
     
     return {
-      status: 'success',
-      count: calendars.length,
-      calendars
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'success',
+          count: calendars.length,
+          calendars
+        })
+      }]
     };
   } catch (error) {
     logger.error(`Error listing calendars: ${error.message}`);
     
     return {
-      status: 'error',
-      message: `Failed to list calendars: ${error.message}`
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: 'error',
+          message: `Failed to list calendars: ${error.message}`
+        })
+      }]
     };
   }
 }

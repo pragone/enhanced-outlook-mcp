@@ -1,4 +1,6 @@
 require('dotenv').config();
+const os = require('os');
+const path = require('path');
 
 const config = {
   // Server configuration
@@ -8,7 +10,7 @@ const config = {
     port: process.env.PORT || 3000,
     authPort: process.env.AUTH_PORT || 3333,
     logLevel: process.env.LOG_LEVEL || 'info',
-    tokenStoragePath: process.env.TOKEN_STORAGE_PATH || `${process.env.HOME}/.enhanced-outlook-mcp-tokens.json`
+    tokenStoragePath: process.env.TOKEN_STORAGE_PATH || path.join(os.homedir(), '.enhanced-outlook-mcp-tokens.json')
   },
   
   // Microsoft Graph API configuration

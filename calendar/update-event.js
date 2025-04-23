@@ -1,6 +1,7 @@
 const config = require('../config');
 const logger = require('../utils/logger');
 const { GraphApiClient } = require('../utils/graph-api');
+const { listUsers } = require('../auth/token-manager');
 
 /**
  * Update an existing calendar event
@@ -8,14 +9,30 @@ const { GraphApiClient } = require('../utils/graph-api');
  * @returns {Promise<Object>} - Update result
  */
 async function updateEventHandler(params = {}) {
-  const userId = params.userId || 'default';
+  let userId = params.userId;
+  if (!userId) {
+    const users = await listUsers();
+    if (users.length === 0) {
+      return formatMcpResponse({
+        status: 'error',
+        message: 'No authenticated users found. Please authenticate first.'
+      });
+    }
+    userId = users.length === 1 ? users[0] : params.userId;
+    if (!userId) {
+      return formatMcpResponse({
+        status: 'error',
+        message: 'Multiple users found. Please specify userId parameter.'
+      });
+    }
+  }
   const eventId = params.eventId;
   
   if (!eventId) {
-    return {
+    return formatMcpResponse({
       status: 'error',
       message: 'Event ID is required'
-    };
+    });
   }
   
   try {
@@ -86,18 +103,18 @@ async function updateEventHandler(params = {}) {
     // Update the event
     await graphClient.patch(`/me/events/${eventId}`, updateData);
     
-    return {
+    return formatMcpResponse({
       status: 'success',
       message: 'Event updated successfully',
       eventId
-    };
+    });
   } catch (error) {
     logger.error(`Error updating calendar event: ${error.message}`);
     
-    return {
+    return formatMcpResponse({
       status: 'error',
       message: `Failed to update calendar event: ${error.message}`
-    };
+    });
   }
 }
 
@@ -214,22 +231,38 @@ function formatAttendees(attendees) {
  * @returns {Promise<Object>} - Response result
  */
 async function respondToEventHandler(params = {}) {
-  const userId = params.userId || 'default';
+  let userId = params.userId;
+  if (!userId) {
+    const users = await listUsers();
+    if (users.length === 0) {
+      return formatMcpResponse({
+        status: 'error',
+        message: 'No authenticated users found. Please authenticate first.'
+      });
+    }
+    userId = users.length === 1 ? users[0] : params.userId;
+    if (!userId) {
+      return formatMcpResponse({
+        status: 'error',
+        message: 'Multiple users found. Please specify userId parameter.'
+      });
+    }
+  }
   const eventId = params.eventId;
   const response = params.response;
   
   if (!eventId) {
-    return {
+    return formatMcpResponse({
       status: 'error',
       message: 'Event ID is required'
-    };
+    });
   }
   
   if (!response || !['accept', 'tentativelyAccept', 'decline'].includes(response)) {
-    return {
+    return formatMcpResponse({
       status: 'error',
       message: 'Valid response is required (accept, tentativelyAccept, or decline)'
-    };
+    });
   }
   
   try {
@@ -245,18 +278,18 @@ async function respondToEventHandler(params = {}) {
     // Send the response
     await graphClient.post(`/me/events/${eventId}/${response}`, responseData);
     
-    return {
+    return formatMcpResponse({
       status: 'success',
       message: `Event ${getResponseText(response)} successfully`,
       eventId
-    };
+    });
   } catch (error) {
     logger.error(`Error responding to calendar event: ${error.message}`);
     
-    return {
+    return formatMcpResponse({
       status: 'error',
       message: `Failed to respond to calendar event: ${error.message}`
-    };
+    });
   }
 }
 
@@ -276,6 +309,22 @@ function getResponseText(response) {
     default:
       return 'responded to';
   }
+}
+
+/**
+ * Format response for MCP
+ * @param {Object} data - Response data
+ * @returns {Object} - MCP formatted response
+ */
+function formatMcpResponse(data) {
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(data)
+      }
+    ]
+  };
 }
 
 module.exports = {
