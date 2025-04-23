@@ -55,7 +55,7 @@ async function listFoldersHandler(params = {}) {
     // Build query parameters
     const queryParams = buildQueryParams({
       top: params.limit || 100,
-      select: ['id', 'displayName', 'parentFolderId', 'childFolderCount', 'totalItemCount', 'unreadItemCount', 'wellKnownName'],
+      select: ['id', 'displayName', 'parentFolderId', 'childFolderCount', 'totalItemCount', 'unreadItemCount'],
       filter: params.filter,
       orderBy: params.orderBy || { displayName: 'asc' }
     });
@@ -81,8 +81,7 @@ async function listFoldersHandler(params = {}) {
       parentFolderId: folder.parentFolderId,
       childFolderCount: folder.childFolderCount,
       itemCount: folder.totalItemCount,
-      unreadItemCount: folder.unreadItemCount,
-      wellKnownName: folder.wellKnownName || null
+      unreadItemCount: folder.unreadItemCount
     }));
     
     return {
@@ -217,7 +216,6 @@ async function getFolderHandler(params = {}) {
       childFolderCount: folder.childFolderCount,
       itemCount: folder.totalItemCount,
       unreadItemCount: folder.unreadItemCount,
-      wellKnownName: folder.wellKnownName || null,
       childFolders,
       recentMessages
     };

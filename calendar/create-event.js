@@ -91,7 +91,7 @@ async function createEventHandler(params = {}) {
     if (calendarId === 'primary') {
       endpoint = '/me/events';
     } else {
-      endpoint = `/me/calendars/${calendarId}/events`;
+      endpoint = `/users/${userId}/calendars/${calendarId}/events`;
     }
     
     const event = await graphClient.post(endpoint, eventData);
