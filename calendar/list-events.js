@@ -3,6 +3,7 @@ const logger = require('../utils/logger');
 const { GraphApiClient } = require('../utils/graph-api');
 const { listUsers } = require('../auth/token-manager');
 const { buildQueryParams } = require('../utils/odata-helpers');
+const { normalizeParameters } = require('../utils/parameter-helpers');
 
 /**
  * List calendar events
@@ -10,7 +11,10 @@ const { buildQueryParams } = require('../utils/odata-helpers');
  * @returns {Promise<Object>} - List of events
  */
 async function listEventsHandler(params = {}) {
-  let userId = params.userId;
+  // Normalize parameters
+  const normalizedParams = normalizeParameters(params);
+  let userId = normalizedParams.userId;
+  
   if (!userId) {
     const users = await listUsers();
     if (users.length === 0) {
@@ -24,7 +28,7 @@ async function listEventsHandler(params = {}) {
         }]
       };
     }
-    userId = users.length === 1 ? users[0] : params.userId;
+    userId = users.length === 1 ? users[0] : normalizedParams.userId;
     if (!userId) {
       return {
         content: [{
@@ -38,12 +42,10 @@ async function listEventsHandler(params = {}) {
     }
   }
   
-  // Accept both naming conventions for parameters
-  const calendarId = params.calendarId || params.calendar_id || 'primary';
-  
-  // Get date range (default to current month)
-  let startDateTime = params.startDateTime || params.start_date;
-  let endDateTime = params.endDateTime || params.end_date;
+  // Use normalized parameters
+  const calendarId = normalizedParams.calendarId || 'primary';
+  let startDateTime = normalizedParams.startDateTime;
+  let endDateTime = normalizedParams.endDateTime;
   
   if (!startDateTime) {
     const now = new Date();
@@ -58,7 +60,7 @@ async function listEventsHandler(params = {}) {
   }
   
   const limit = Math.min(
-    params.limit || config.calendar.maxEventsPerRequest, 
+    normalizedParams.limit || config.calendar.maxEventsPerRequest, 
     config.calendar.maxEventsPerRequest
   );
   
@@ -77,10 +79,10 @@ async function listEventsHandler(params = {}) {
     
     // Build query parameters
     const queryParams = buildQueryParams({
-      select: params.fields || config.calendar.defaultFields,
+      select: normalizedParams.fields || config.calendar.defaultFields,
       top: limit,
       orderBy: 'start/dateTime asc',
-      filter: params.filter
+      filter: normalizedParams.filter
     });
     
     // Add start and end time parameters
@@ -89,7 +91,7 @@ async function listEventsHandler(params = {}) {
     
     // Get events
     const events = await graphClient.getPaginated(endpoint, queryParams, {
-      maxPages: params.maxPages || 1
+      maxPages: normalizedParams.maxPages || 1
     });
     
     return {
@@ -126,7 +128,10 @@ async function listEventsHandler(params = {}) {
  * @returns {Promise<Object>} - Event details
  */
 async function getEventHandler(params = {}) {
-  let userId = params.userId;
+  // Normalize parameters
+  const normalizedParams = normalizeParameters(params);
+  let userId = normalizedParams.userId;
+  
   if (!userId) {
     const users = await listUsers();
     if (users.length === 0) {
@@ -140,7 +145,7 @@ async function getEventHandler(params = {}) {
         }]
       };
     }
-    userId = users.length === 1 ? users[0] : params.userId;
+    userId = users.length === 1 ? users[0] : normalizedParams.userId;
     if (!userId) {
       return {
         content: [{
@@ -153,7 +158,7 @@ async function getEventHandler(params = {}) {
       };
     }
   }
-  const eventId = params.eventId || params.event_id;
+  const eventId = normalizedParams.eventId;
   
   if (!eventId) {
     return {
@@ -217,7 +222,10 @@ async function getEventHandler(params = {}) {
  * @returns {Promise<Object>} - List of calendars
  */
 async function listCalendarsHandler(params = {}) {
-  let userId = params.userId || params.user_id;
+  // Normalize parameters
+  const normalizedParams = normalizeParameters(params);
+  let userId = normalizedParams.userId;
+  
   if (!userId) {
     const users = await listUsers();
     if (users.length === 0) {
@@ -231,7 +239,7 @@ async function listCalendarsHandler(params = {}) {
         }]
       };
     }
-    userId = users.length === 1 ? users[0] : params.userId;
+    userId = users.length === 1 ? users[0] : normalizedParams.userId;
     if (!userId) {
       return {
         content: [{

@@ -70,6 +70,13 @@ const server = new McpServer({
   port: config.server.port,
   toolMetadata: config.toolMetadata,
   
+  // Add prompts capability declaration
+  capabilities: {
+    prompts: {
+      listChanged: true
+    }
+  },
+  
   onRequest: async (req) => {
     logger.info(`Received request for tool: ${req.tool}`);
     
@@ -142,6 +149,33 @@ const server = new McpServer({
   }
 });
 
+
+// Register direct prompt for calendar_availability
+server.prompt(
+  "calendar_availability",
+  'Check availability for scheduling a meeting. Use to find available time slots within a date range',
+  {
+    startTime: z.string().describe('The start time for availability check (ISO format)'),
+    endTime: z.string().describe('The end time for availability check (ISO format)')
+  },
+  async (params) => {
+    logger.info(`Received direct calendar_availability prompt request`);
+    
+    return {
+      description: "Calendar availability check prompt",
+      messages: [
+        {
+          role: "user", 
+          content: {
+            type: "text",
+            text: `Using enhanced-outlook-mcp list_events tool, please check my calendar availability between ${params.startTime} and ${params.endTime} and suggest some suitable meeting times.`
+          }
+        }
+      ]
+    };
+  }
+);
+
 // Helper function for error handling in tool handlers
 const withErrorHandling = (handler) => async (params) => {
   try {
@@ -149,12 +183,18 @@ const withErrorHandling = (handler) => async (params) => {
     const { rateLimiter } = require('./utils/rate-limiter');
     await rateLimiter.check();
     
+    // Normalize parameters for consistent handling
+    const { normalizeParameters } = require('./utils/parameter-helpers');
+    
     // For Claude Desktop compatibility
     if (global.__last_message?.params?.arguments) {
       params = { ...params, ...global.__last_message.params.arguments };
     }
     
-    return await handler(params);
+    // Get normalized parameters
+    const normalizedParams = normalizeParameters(params);
+    
+    return await handler(normalizedParams);
   } catch (error) {
     logger.error(`Error executing tool:`, error);
     
@@ -414,6 +454,7 @@ const withErrorHandling = (handler) => async (params) => {
 // Email tools
 server.tool(
   "read_email",
+  'Read a specific email by ID. Use to get the full content of an email when you have its ID. Call check_auth_status first to determine if authentication is needed, then list_emails or search_emails to get email IDs before using this tool.',
   {
     userId: z.string().optional().describe('User identifier (optional, defaults to "default")'),
     id: z.string().optional().describe('The ID of the email message to read - obtained from list_emails or search_emails'),
@@ -422,31 +463,12 @@ server.tool(
     emailId: z.string().optional().describe('Alternative parameter name for email ID - obtained from list_emails or search_emails'),
     markAsRead: z.boolean().optional().describe('Whether to mark the email as read when retrieving it')
   },
-  withErrorHandling(readEmailHandler),
-  {
-    description: 'Read a specific email by ID',
-    usage: `Use to get the full content of an email when you have its ID. Call check_auth_status first to determine if authentication is needed, then list_emails or search_emails to get email IDs before using this tool.
-
-Example:
-1) Call check_auth_status first
-2) Call authenticate if auth_needed is true
-3) Call list_emails to get a list of emails with their IDs
-4) Then read_email with parameters:
-   {
-     "id": "AAMkADE1...",
-     "markAsRead": true
-   }
-   
-For keeping the email as unread:
-1) Call check_auth_status
-2) Call authenticate if needed
-3) Call list_emails or search_emails to find the email
-4) Call read_email with markAsRead=false`
-  }
+  withErrorHandling(readEmailHandler)
 );
 
 server.tool(
   "list_emails",
+  'List emails from a mailbox folder. Use to list emails from a specific folder. Call check_auth_status first to determine if authentication is needed, then optionally list_folders if you need to work with a custom folder rather than default ones like "inbox" or "sentitems".',
   {
     userId: z.string().optional().describe('User identifier (optional, defaults to "default")'),
     folderId: z.string().optional().describe('Folder ID or well-known folder name (inbox, drafts, sentitems, deleteditems) - obtain specific folder IDs from list_folders'),
@@ -458,31 +480,12 @@ server.tool(
       .describe('Fields to include in the response - comma-separated list or array of field names'),
     search: z.string().optional().describe('Search query to filter results (uses server-side search)')
   },
-  withErrorHandling(listEmailsHandler),
-  {
-    description: 'List emails from a mailbox folder',
-    usage: `Use to list emails from a specific folder. Call check_auth_status first to determine if authentication is needed, then optionally list_folders if you need to work with a custom folder rather than default ones like "inbox" or "sentitems".
-
-Example:
-1) Call check_auth_status first
-2) Call authenticate if auth_needed is true
-3) Then list_emails with parameters:
-   {
-     "folderId": "inbox", 
-     "limit": 10,
-     "orderBy": "receivedDateTime desc"
-   }
-   
-For custom folders:
-1) Call check_auth_status
-2) Call authenticate if needed
-3) Call list_folders to get folder IDs
-4) Call list_emails with the specific folderId`
-  }
+  withErrorHandling(listEmailsHandler)
 );
 
 server.tool(
   "search_emails",
+  'Search for emails across all folders. Use to search for emails matching specific criteria across the entire mailbox. Call check_auth_status first to determine if authentication is needed. For folder-specific searches, use list_emails with the search parameter instead.',
   {
     userId: z.string().optional().describe('User identifier (optional, defaults to "default")'),
     query: z.string().describe('Search query to find specific emails across folders'),
@@ -490,67 +493,24 @@ server.tool(
     fields: z.union([z.string(), z.array(z.string())]).optional()
       .describe('Fields to include in the response - comma-separated list or array of field names')
   },
-  withErrorHandling(searchEmailsHandler),
-  {
-    description: 'Search for emails across all folders',
-    usage: `Use to search for emails matching specific criteria across the entire mailbox. Call check_auth_status first to determine if authentication is needed. For folder-specific searches, use list_emails with the search parameter instead.
-
-Example:
-1) Call check_auth_status first
-2) Call authenticate if auth_needed is true
-3) Then search_emails with parameters:
-   {
-     "query": "monthly report",
-     "limit": 10,
-     "fields": ["id", "subject", "receivedDateTime", "from", "bodyPreview"]
-   }
-   
-For narrowing results:
-1) Call check_auth_status
-2) Call authenticate if needed
-3) Call search_emails with a specific query
-4) Call read_email with IDs from the search results`
-  }
+  withErrorHandling(searchEmailsHandler)
 );
 
 // Authentication tools
 server.tool(
   "authenticate",
+  'Authenticate with Microsoft Graph API. Use this tool only when check_auth_status indicates authentication is needed. Authentication tokens are cached, so this doesn\'t need to be called every time.',
   {
     userId: z.string().optional().describe('User identifier for multi-user scenarios (defaults to "default")'),
     forceNewAuth: z.boolean().optional().describe('Force new authentication flow even if valid tokens exist')
   },
-  withErrorHandling(authenticateHandler),
-  {
-    description: 'Authenticate with Microsoft Graph API',
-    usage: `Use this tool only when check_auth_status indicates authentication is needed. Authentication tokens are cached, so this doesn't need to be called every time.
-
-Example:
-1) First call check_auth_status to determine if authentication is needed:
-   {
-     "userId": "default"
-   }
-   
-2) If auth_needed is true, then call authenticate:
-   {
-     "userId": "default"
-   }
-   
-3) Follow the authentication URL provided in the response
-4) Complete the sign-in process in your browser
-5) Return to continue working with other tools
-
-For force re-authentication (rarely needed):
-1) Call authenticate with parameters:
-   {
-     "forceNewAuth": true
-   }`
-  }
+  withErrorHandling(authenticateHandler)
 );
 
 // Add more auth tools
 server.tool(
   "check_auth_status",
+  'Check authentication status. Use this tool first before performing operations to determine if authentication is needed or if existing cached credentials can be used.',
   {
     userId: z.string().optional().describe('User identifier (optional, defaults to "default")')
   },
@@ -562,7 +522,27 @@ server.tool(
       const responseData = JSON.parse(result.content[0].text);
       
       // Add additional fields to help Claude understand auth status better
-      if (responseData.authenticated) {
+      if (responseData.isAuthenticating === false && responseData.instruction && responseData.instruction.includes("You are authenticated")) {
+        // User is already authenticated
+        responseData.authenticated = true;
+        responseData.auth_needed = false;
+        responseData.message = "Authentication already complete. No need to authenticate again.";
+        responseData.token_expiry = responseData.tokenExpiresAt || null;
+        
+        // Calculate if token will expire soon (within 5 minutes)
+        if (responseData.tokenExpiresAt) {
+          const expiryDate = new Date(responseData.tokenExpiresAt);
+          const now = new Date();
+          const timeUntilExpiry = expiryDate - now;
+          const fiveMinutes = 5 * 60 * 1000;
+          
+          if (timeUntilExpiry < fiveMinutes && timeUntilExpiry > 0) {
+            responseData.auth_needed = true;
+            responseData.message = "Authentication token will expire soon. Consider re-authenticating.";
+          }
+        }
+      } else if (responseData.authenticated) {
+        // Handle the case where 'authenticated' is already set to true
         responseData.auth_needed = false;
         responseData.message = "Authentication already complete. No need to authenticate again.";
         responseData.token_expiry = responseData.tokenExpiresAt || null;
@@ -580,6 +560,8 @@ server.tool(
           }
         }
       } else {
+        // User is not authenticated
+        responseData.authenticated = false;
         responseData.auth_needed = true;
         responseData.message = "Authentication required. Please call authenticate tool.";
       }
@@ -606,60 +588,35 @@ server.tool(
     }
   },
   {
-    description: 'Check authentication status',
-    usage: `Use this tool to check if authentication is needed before performing operations. It tells you whether authentication is required or if existing cached credentials can be used.
-
-Example:
-1) Call check_auth_status:
-   {
-     "userId": "default"
-   }
-
-This will return information about whether authentication is needed, along with details about token validity and expiration.
-
-If auth_needed is false, you can proceed directly to other tools without calling authenticate first.`
+    description: 'Check authentication status. Use this tool first before performing operations to determine if authentication is needed or if existing cached credentials can be used.',
+    annotations: {
+      title: "Check Auth Status",
+      readOnlyHint: true,
+      openWorldHint: false
+    }
   }
 );
 
 server.tool(
   "revoke_authentication",
+  'Revoke authentication and delete stored tokens. Use to log out a user and remove their stored authentication tokens.',
   {
     userId: z.string().optional().describe('User identifier (optional, defaults to "default")')
   },
-  withErrorHandling(revokeAuthenticationHandler),
-  {
-    description: 'Revoke authentication and delete stored tokens',
-    usage: `Use to log out a user and remove their stored authentication tokens. Call this when you're done working with sensitive data or when you need to switch authentication contexts.
-
-Example:
-1) Call revoke_authentication with parameters:
-   {
-     "userId": "default"
-   }
-   
-After revoking authentication, you'll need to call authenticate again before accessing protected resources.`
-  }
+  withErrorHandling(revokeAuthenticationHandler)
 );
 
 server.tool(
   "list_authenticated_users",
+  'List all authenticated users. Use to see which users are authenticated in the system. This tool does not require authentication.',
   {},
-  withErrorHandling(listAuthenticatedUsersHandler),
-  {
-    description: 'List all authenticated users',
-    usage: `Use to see which users are authenticated in the system. This tool does not require authentication.
-
-Example:
-1) Call list_authenticated_users with no parameters
-   {}
-   
-This returns a list of all user IDs that have stored authentication tokens.`
-  }
+  withErrorHandling(listAuthenticatedUsersHandler)
 );
 
 // Add more email tools
 server.tool(
   "mark_email",
+  'Update email properties like read/unread status or importance. Use to change the status of an email message. Call authenticate first, then list_emails or search_emails to get the email ID before using this tool. At least one of isRead, isFlagged, or importance must be provided.',
   {
     userId: z.string().optional().describe('User identifier (optional, defaults to "default")'),
     id: z.string().describe('Email ID to mark - obtained from list_emails or search_emails'),
@@ -667,15 +624,12 @@ server.tool(
     isFlagged: z.boolean().optional().describe('Whether to flag (true) or unflag (false) the email'),
     importance: z.enum(['low', 'normal', 'high']).optional().describe('Set the importance level of the email')
   },
-  withErrorHandling(markEmailHandler),
-  {
-    description: 'Update email properties like read/unread status or importance',
-    usage: 'Use to change the status of an email message. Call authenticate first, then list_emails or search_emails to get the email ID before using this tool. At least one of isRead, isFlagged, or importance must be provided.'
-  }
+  withErrorHandling(markEmailHandler)
 );
 
 server.tool(
   "send_email",
+  'Send a new email. Use to send an email to one or more recipients. Call check_auth_status first to determine if authentication is needed. For emails with attachments, create a draft with create_draft first, then add attachments with add_attachment before sending.',
   {
     userId: z.string().optional().describe('User identifier (optional, defaults to "default")'),
     subject: z.string().describe('Email subject'),
@@ -685,35 +639,13 @@ server.tool(
     cc: z.union([z.string(), z.array(z.string())]).optional().describe('CC recipient email address(es) - string or array of strings'),
     bcc: z.union([z.string(), z.array(z.string())]).optional().describe('BCC recipient email address(es) - string or array of strings')
   },
-  withErrorHandling(sendEmailHandler),
-  {
-    description: 'Send a new email',
-    usage: `Use to send an email to one or more recipients. Call check_auth_status first to determine if authentication is needed. For emails with attachments, create a draft with create_draft first, then add attachments with add_attachment before sending.
-
-Example:
-1) Call check_auth_status first
-2) Call authenticate if auth_needed is true
-3) Then send_email with parameters:
-   {
-     "subject": "Meeting Agenda",
-     "body": "<p>Here's the agenda for our meeting tomorrow.</p><p>Looking forward to it!</p>",
-     "bodyType": "HTML",
-     "to": "recipient@example.com",
-     "cc": ["cc1@example.com", "cc2@example.com"]
-   }
-   
-For emails with attachments:
-1) Call check_auth_status
-2) Call authenticate if needed
-3) Call create_draft to create a draft email
-4) Call add_attachment for each attachment
-5) Call send_email with the draft ID`
-  }
+  withErrorHandling(sendEmailHandler)
 );
 
 // Add some calendar tools
 server.tool(
   "list_events",
+  'List calendar events within a date range. Use to view upcoming calendar events. Call authenticate first, then list_calendars if you need to work with a specific calendar. Results can be used with get_event to view event details.',
   {
     userId: z.string().optional().describe('User identifier (optional, defaults to "default")'),
     startDateTime: z.string().optional().describe('Start date and time in ISO format (e.g., "2023-11-01T00:00:00Z")'),
@@ -721,15 +653,12 @@ server.tool(
     limit: z.number().optional().describe('Maximum number of events to return'),
     calendarId: z.string().optional().describe('Specific calendar ID (obtain from list_calendars first). Required when working with non-default calendars.')
   },
-  withErrorHandling(listEventsHandler),
-  {
-    description: 'List calendar events within a date range',
-    usage: 'Use to view upcoming calendar events. Call authenticate first, then list_calendars if you need to work with a specific calendar. Results can be used with get_event to view event details.'
-  }
+  withErrorHandling(listEventsHandler)
 );
 
 server.tool(
   "create_event",
+  'Create a new calendar event. Use to schedule a new meeting or appointment. Call check_auth_status first to determine if authentication is needed, then list_calendars if you need to work with a specific calendar. For events with attendees, consider using find_meeting_times first to identify suitable time slots. Never add attendee emails unless the user has explicitly provided them. Do NOT infer or hallucinate attendees.',
   {
     userId: z.string().optional().describe('User identifier (optional, defaults to "default")'),
     subject: z.string().describe('Event subject/title'),
@@ -746,106 +675,29 @@ server.tool(
     isOnlineMeeting: z.boolean().optional().describe('Whether this is an online meeting'),
     calendarId: z.string().optional().describe('Specific calendar ID (obtain from list_calendars first). Required when working with non-default calendars.')
   },
-  withErrorHandling(createEventHandler),
-  {
-    description: 'Create a new calendar event',
-    usage: `Use to schedule a new meeting or appointment. Call check_auth_status first to determine if authentication is needed, then list_calendars if you need to work with a specific calendar. For events with attendees, consider using find_meeting_times first to identify suitable time slots.
-
-Example:
-1) Call check_auth_status first
-2) Call authenticate if auth_needed is true
-3) Call list_calendars to get available calendars
-4) Then create_event with parameters:
-   {
-     "calendarId": "AAMkADE1...", 
-     "subject": "Team Meeting",
-     "body": "Weekly team sync to discuss project status",
-     "bodyType": "Text",
-     "start": "2023-11-10T15:00:00Z",
-     "end": "2023-11-10T16:00:00Z",
-     "location": "Conference Room A",
-     "attendees": [
-       {
-         "email": "colleague@example.com",
-         "name": "John Doe",
-         "type": "required"
-       },
-       {
-         "email": "manager@example.com",
-         "type": "optional"
-       }
-     ],
-     "isOnlineMeeting": true
-   }
-   
-For finding optimal meeting times:
-1) Call check_auth_status
-2) Call authenticate if needed
-3) Call find_meeting_times to check attendee availability
-4) Call create_event with the chosen time slot`
-  }
+  withErrorHandling(createEventHandler)
 );
 
 // Add some folder tools
 server.tool(
   "list_folders",
+  'List mail folders. Use to get available mail folders and their IDs. Call check_auth_status first to determine if authentication is needed. This tool provides folder IDs needed for other operations such as list_emails, move_emails, create_folder, etc.',
   {
     userId: z.string().optional().describe('User identifier (optional, defaults to "default")'),
     parentFolderId: z.string().optional().describe('ID of the parent folder to list subfolders from. If not provided, lists top-level folders.')
   },
-  withErrorHandling(listFoldersHandler),
-  {
-    description: 'List mail folders',
-    usage: `Use to get available mail folders and their IDs. Call check_auth_status first to determine if authentication is needed. This tool provides folder IDs needed for other operations such as list_emails, move_emails, create_folder, etc. When called without parentFolderId, lists top-level folders; with parentFolderId lists subfolders.
-
-Example:
-1) Call check_auth_status first
-2) Call authenticate if auth_needed is true
-3) Then list_folders to get top-level folders:
-   {
-     "userId": "default"
-   }
-   
-For listing subfolders:
-1) Call check_auth_status
-2) Call authenticate if needed
-3) Call list_folders to get top-level folders
-4) Call list_folders again with parameters:
-   {
-     "parentFolderId": "AAMkFOL1..."
-   }`
-  }
+  withErrorHandling(listFoldersHandler)
 );
 
 server.tool(
   "move_emails",
+  'Move emails to a different folder. Use to organize emails by moving them between folders. Call check_auth_status first to determine if authentication is needed, then list_emails or search_emails to get email IDs, and list_folders to get the destination folder ID before using this tool.',
   {
     userId: z.string().optional().describe('User identifier (optional, defaults to "default")'),
     emailIds: z.array(z.string()).describe('Array of email IDs to move - obtained from list_emails or search_emails'),
     destinationFolderId: z.string().describe('Destination folder ID - obtained from list_folders or using well-known folder names like "inbox" or "archive"')
   },
-  withErrorHandling(moveEmailsHandler),
-  {
-    description: 'Move emails to a different folder',
-    usage: `Use to organize emails by moving them between folders. Call check_auth_status first to determine if authentication is needed, then list_emails or search_emails to get email IDs, and list_folders to get the destination folder ID before using this tool. Can move multiple emails at once for efficiency.
-
-Example:
-1) Call check_auth_status first
-2) Call authenticate if auth_needed is true
-3) Call list_folders to find or create destination folder
-4) Call list_emails to find emails to move
-5) Then move_emails with parameters:
-   {
-     "emailIds": ["AAMkADE1...", "AAMkADE2..."],
-     "destinationFolderId": "AAMkFOL1..."
-   }
-   
-For archiving emails:
-1) Call check_auth_status
-2) Call authenticate if needed
-3) Call list_emails to find emails to archive
-4) Call move_emails with destinationFolderId="archive"`
-  }
+  withErrorHandling(moveEmailsHandler)
 );
 
 // Add critical tools based on user needs and add more as required
@@ -853,6 +705,7 @@ For archiving emails:
 // Add missing email tools
 server.tool(
   "create_draft",
+  'Create a draft email. Use to save an email as a draft without sending it. Call check_auth_status first to determine if authentication is needed. This is particularly useful when you need to add attachments before sending.',
   {
     userId: z.string().optional().describe('User identifier (optional, defaults to "default")'),
     subject: z.string().describe('Email subject'),
@@ -862,31 +715,12 @@ server.tool(
     cc: z.union([z.string(), z.array(z.string())]).optional().describe('CC recipient(s)'),
     bcc: z.union([z.string(), z.array(z.string())]).optional().describe('BCC recipient(s)')
   },
-  withErrorHandling(createDraftHandler),
-  {
-    description: 'Create a draft email',
-    usage: `Use to save an email as a draft without sending it. Call check_auth_status first to determine if authentication is needed. This is particularly useful when you need to add attachments before sending.
-
-Example:
-1) Call check_auth_status first
-2) Call authenticate if auth_needed is true
-3) Then create_draft with parameters:
-   {
-     "subject": "Project Proposal",
-     "body": "Please find attached our proposal for the new project.",
-     "bodyType": "Text",
-     "to": ["recipient1@example.com", "recipient2@example.com"],
-     "cc": "manager@example.com"
-   }
-   
-After creating the draft, you can:
-1) Add attachments with add_attachment
-2) Send the draft using send_email with the draft ID`
-  }
+  withErrorHandling(createDraftHandler)
 );
 
 server.tool(
   "reply_email",
+  'Reply to an email. Use to respond to an existing email. Call authenticate first, then list_emails or search_emails to find the email, then read_email to view its content before replying.',
   {
     userId: z.string().optional().describe('User identifier (optional, defaults to "default")'),
     emailId: z.string().describe('ID of the email to reply to - obtained from list_emails or search_emails'),
@@ -895,15 +729,12 @@ server.tool(
     replyAll: z.boolean().optional().describe('Whether to reply to all recipients (true) or just the sender (false)'),
     sendNow: z.boolean().optional().describe('Whether to send immediately (true) or create a draft (false)')
   },
-  withErrorHandling(replyEmailHandler),
-  {
-    description: 'Reply to an email',
-    usage: 'Use to respond to an existing email. Call authenticate first, then list_emails or search_emails to find the email, then read_email to view its content before replying. Set replyAll=true to include all original recipients, and sendNow=false to create a draft instead of sending immediately.'
-  }
+  withErrorHandling(replyEmailHandler)
 );
 
 server.tool(
   "forward_email",
+  'Forward an email. Use to forward an existing email to new recipients. Call check_auth_status first to determine if authentication is needed, then list_emails or search_emails to find the email to forward.',
   {
     userId: z.string().optional().describe('User identifier (optional, defaults to "default")'),
     emailId: z.string().describe('ID of the email to forward'),
@@ -913,176 +744,79 @@ server.tool(
     body: z.string().optional().describe('Additional message to include'),
     bodyType: z.enum(['Text', 'HTML']).optional().describe('Body content type')
   },
-  withErrorHandling(forwardEmailHandler),
-  {
-    description: 'Forward an email',
-    usage: `Use to forward an existing email to new recipients. Call check_auth_status first to determine if authentication is needed, then list_emails or search_emails to find the email to forward.
-
-Example:
-1) Call check_auth_status first
-2) Call authenticate if auth_needed is true
-3) Call list_emails or search_emails to find the email
-4) Then forward_email with parameters:
-   {
-     "emailId": "AAMkADE1...",
-     "to": ["recipient1@example.com", "recipient2@example.com"],
-     "cc": "manager@example.com",
-     "body": "Please see the forwarded email below. I'd like your feedback on this.",
-     "bodyType": "Text"
-   }`
-  }
+  withErrorHandling(forwardEmailHandler)
 );
 
 server.tool(
   "get_attachment",
+  'Get email attachment. Use to retrieve a specific attachment from an email. Call check_auth_status first to determine if authentication is needed, then list_emails or search_emails to find the email, then list_attachments to get attachment IDs before using this tool.',
   {
     userId: z.string().optional().describe('User identifier (optional, defaults to "default")'),
     emailId: z.string().describe('ID of the email - obtained from list_emails or search_emails'),
     attachmentId: z.string().describe('ID of the attachment - obtained from list_attachments')
   },
-  withErrorHandling(getAttachmentHandler),
-  {
-    description: 'Get email attachment',
-    usage: `Use to retrieve a specific attachment from an email. Call check_auth_status first to determine if authentication is needed, then list_emails or search_emails to find the email, then list_attachments to get attachment IDs before using this tool.
-
-Example:
-1) Call check_auth_status first
-2) Call authenticate if auth_needed is true
-3) Call list_emails or search_emails to find the email with attachments
-4) Call list_attachments to get the attachment IDs
-5) Then get_attachment with parameters:
-   {
-     "emailId": "AAMkADE1...",
-     "attachmentId": "AAMkATT1..."
-   }`
-  }
+  withErrorHandling(getAttachmentHandler)
 );
 
 server.tool(
   "list_attachments",
+  'List attachments for an email. Use to see all attachments on a specific email. Call check_auth_status first to determine if authentication is needed, then list_emails or search_emails to find the email before using this tool.',
   {
     userId: z.string().optional().describe('User identifier (optional, defaults to "default")'),
     emailId: z.string().describe('ID of the email')
   },
-  withErrorHandling(listAttachmentsHandler),
-  {
-    description: 'List attachments for an email',
-    usage: `Use to see all attachments on a specific email. Call check_auth_status first to determine if authentication is needed, then list_emails or search_emails to find the email before using this tool.
-
-Example:
-1) Call check_auth_status first
-2) Call authenticate if auth_needed is true
-3) Call list_emails to find emails with attachments
-4) Then list_attachments with parameters:
-   {
-     "emailId": "AAMkADE1..."
-   }
-   
-This will return a list of attachments with their IDs which can be used with get_attachment to download them.`
-  }
+  withErrorHandling(listAttachmentsHandler)
 );
 
 server.tool(
   "add_attachment",
+  'Add an attachment to a draft email. Use to attach files to a draft email before sending it. Call check_auth_status first to determine if authentication is needed, then create_draft to create a draft email, then add_attachment to add files to it. You must provide either contentBytes (base64 encoded file content) or contentUrl (for reference attachments).',
   {
     userId: z.string().optional().describe('User identifier (optional, defaults to "default")'),
-    emailId: z.string().describe('ID of the email or draft - obtained from create_draft or list_emails'),
-    name: z.string().describe('Attachment filename including extension (e.g., "document.pdf")'),
-    contentType: z.string().describe('MIME type of the attachment (e.g., "application/pdf")'),
-    contentBytes: z.string().describe('Base64 encoded content of the attachment')
+    emailId: z.string().describe('ID of the draft email to add attachment to - obtained from create_draft'),
+    name: z.string().describe('Name of the attachment file'),
+    contentBytes: z.string().optional().describe('Base64 encoded content of the attachment'),
+    contentUrl: z.string().optional().describe('URL to the content for reference attachments'),
+    contentType: z.string().optional().describe('MIME type of the attachment (defaults to application/octet-stream)'),
+    isInline: z.boolean().optional().describe('Whether the attachment should be displayed inline in the email body')
   },
-  withErrorHandling(addAttachmentHandler),
-  {
-    description: 'Add attachment to an email or draft',
-    usage: `Use to attach a file to an email draft before sending. Call check_auth_status first to determine if authentication is needed, then create_draft to create an email draft before adding attachments with this tool.
-
-Example:
-1) Call check_auth_status first
-2) Call authenticate if auth_needed is true
-3) Call create_draft to create a new draft email
-4) Then add_attachment with parameters:
-   {
-     "emailId": "AAMkADE1...",
-     "name": "document.pdf",
-     "contentType": "application/pdf",
-     "contentBytes": "JVBERi0xLjMKJcTl8uXrp/Og0MTGCjQgMCBvYmoKPDwgL0xlbmd0aCA1IDAgUg=="
-   }
-   
-You can add multiple attachments by calling this tool multiple times with the same emailId.`
-  }
+  withErrorHandling(addAttachmentHandler)
 );
 
 server.tool(
   "delete_attachment",
+  'Delete an attachment from a draft email. Use to remove an attachment from a draft email. Call check_auth_status first to determine if authentication is needed, then list_attachments to get the attachment ID, then delete_attachment to remove it. This operation can only be performed on draft emails.',
   {
     userId: z.string().optional().describe('User identifier (optional, defaults to "default")'),
-    emailId: z.string().describe('ID of the email or draft'),
-    attachmentId: z.string().describe('ID of the attachment to delete')
+    emailId: z.string().describe('ID of the draft email - obtained from list_emails or create_draft'),
+    attachmentId: z.string().describe('ID of the attachment to delete - obtained from list_attachments')
   },
-  withErrorHandling(deleteAttachmentHandler),
-  {
-    description: 'Delete attachment from an email draft',
-    usage: `Use to remove an attachment from an email draft. Call check_auth_status first to determine if authentication is needed, then list_attachments to get the attachment IDs.
-
-Example:
-1) Call check_auth_status first
-2) Call authenticate if auth_needed is true
-3) Call list_attachments to get IDs of attachments on the draft
-4) Then delete_attachment with parameters:
-   {
-     "emailId": "AAMkADE1...",
-     "attachmentId": "AAMkATT1..."
-   }`
-  }
+  withErrorHandling(deleteAttachmentHandler)
 );
 
 // Add missing calendar tools
 server.tool(
   "get_event",
+  'Get details of a specific calendar event. Use to retrieve detailed information about a calendar event. Call check_auth_status first to determine if authentication is needed, then list_events to get event IDs.',
   {
     userId: z.string().optional().describe('User identifier (optional, defaults to "default")'),
     eventId: z.string().describe('ID of the calendar event')
   },
-  withErrorHandling(getEventHandler),
-  {
-    description: 'Get details of a specific calendar event',
-    usage: `Use to retrieve detailed information about a calendar event. Call check_auth_status first to determine if authentication is needed, then list_events to get event IDs.
-
-Example:
-1) Call check_auth_status first
-2) Call authenticate if auth_needed is true
-3) Call list_events to find the event you're interested in
-4) Then get_event with parameters:
-   {
-     "eventId": "AAMkAEV1..."
-   }`
-  }
+  withErrorHandling(getEventHandler)
 );
 
 server.tool(
   "list_calendars",
+  'List available calendars. Use to retrieve all calendars the user has access to. Call check_auth_status first to determine if authentication is needed. This tool provides calendar IDs needed for create_event, list_events, etc. when working with non-default calendars.',
   {
     userId: z.string().optional().describe('User identifier (optional, defaults to "default")')
   },
-  withErrorHandling(listCalendarsHandler),
-  {
-    description: 'List available calendars',
-    usage: `Use to retrieve all calendars the user has access to. Call check_auth_status first to determine if authentication is needed. This tool provides calendar IDs needed for create_event, list_events, etc. when working with non-default calendars.
-
-Example:
-1) Call check_auth_status first
-2) Call authenticate if auth_needed is true
-3) Then list_calendars with parameters:
-   {
-     "userId": "default"
-   }
-   
-This will return a list of calendars with their IDs which can be used with other calendar tools.`
-  }
+  withErrorHandling(listCalendarsHandler)
 );
 
 server.tool(
   "update_event",
+  'Update an existing calendar event. Use to modify the details of an existing meeting or appointment. Call check_auth_status first to determine if authentication is needed, then list_events and get_event to find the event to update. Example: 1) Call check_auth_status first 2) Call authenticate if auth_needed is true 3) Call list_events to find the event 4) Call get_event to view its current details 5) Then update_event with parameters: { "eventId": "AAMkAEV1...", "subject": "Updated Meeting Title", "start": "2023-11-10T16:00:00Z", "end": "2023-11-10T17:00:00Z" } Only include the fields you want to change. Omitted fields will keep their current values.',
   {
     userId: z.string().optional().describe('User identifier (optional, defaults to "default")'),
     eventId: z.string().describe('ID of the calendar event to update'),
@@ -1092,297 +826,130 @@ server.tool(
     end: z.string().optional().describe('New end time in ISO format'),
     attendees: z.union([z.string(), z.array(z.string())]).optional().describe('New event attendees')
   },
-  withErrorHandling(updateEventHandler),
-  {
-    description: 'Update an existing calendar event',
-    usage: `Use to modify the details of an existing meeting or appointment. Call check_auth_status first to determine if authentication is needed, then list_events and get_event to find the event to update.
-
-Example:
-1) Call check_auth_status first
-2) Call authenticate if auth_needed is true
-3) Call list_events to find the event
-4) Call get_event to view its current details
-5) Then update_event with parameters:
-   {
-     "eventId": "AAMkAEV1...",
-     "subject": "Updated Meeting Title",
-     "start": "2023-11-10T16:00:00Z",
-     "end": "2023-11-10T17:00:00Z"
-   }
-   
-Only include the fields you want to change. Omitted fields will keep their current values.`
-  }
+  withErrorHandling(updateEventHandler)
 );
 
 server.tool(
   "respond_to_event",
+  'Respond to a calendar event invitation. Use to accept, tentatively accept, or decline a meeting invitation. Call check_auth_status first to determine if authentication is needed, then list_events to find invitations. Example: 1) Call check_auth_status first 2) Call authenticate if auth_needed is true 3) Call list_events to find invitation events 4) Then respond_to_event with parameters: { "eventId": "AAMkAEV1...", "response": "accept", "comment": "Looking forward to the meeting." }',
   {
     userId: z.string().optional().describe('User identifier (optional, defaults to "default")'),
     eventId: z.string().describe('ID of the calendar event'),
     response: z.enum(['accept', 'tentativelyAccept', 'decline']).describe('Response to the event invitation'),
     comment: z.string().optional().describe('Optional comment with the response')
   },
-  withErrorHandling(respondToEventHandler),
-  {
-    description: 'Respond to a calendar event invitation',
-    usage: `Use to accept, tentatively accept, or decline a meeting invitation. Call check_auth_status first to determine if authentication is needed, then list_events to find invitations.
-
-Example:
-1) Call check_auth_status first
-2) Call authenticate if auth_needed is true
-3) Call list_events to find invitation events
-4) Then respond_to_event with parameters:
-   {
-     "eventId": "AAMkAEV1...",
-     "response": "accept",
-     "comment": "Looking forward to the meeting."
-   }`
-  }
+  withErrorHandling(respondToEventHandler)
 );
 
 server.tool(
   "delete_event",
+  'Delete a calendar event. Use to remove an event from the calendar without notifying attendees. Call check_auth_status first to determine if authentication is needed, then list_events to find the event to delete.',
   {
     userId: z.string().optional().describe('User identifier (optional, defaults to "default")'),
     eventId: z.string().describe('ID of the calendar event to delete')
   },
-  withErrorHandling(deleteEventHandler),
-  {
-    description: 'Delete a calendar event',
-    usage: `Use to remove an event from the calendar without notifying attendees. Call check_auth_status first to determine if authentication is needed, then list_events to find the event to delete.
-
-Example:
-1) Call check_auth_status first
-2) Call authenticate if auth_needed is true
-3) Call list_events to find the event
-4) Then delete_event with parameters:
-   {
-     "eventId": "AAMkAEV1..."
-   }
-   
-Note: For meetings you've organized with attendees, consider using cancel_event instead to notify participants.`
-  }
+  withErrorHandling(deleteEventHandler)
 );
 
 server.tool(
   "cancel_event",
+  'Cancel a calendar event and notify attendees. Use to cancel a meeting you organized and notify participants. Call check_auth_status first to determine if authentication is needed, then list_events to find the event to cancel. Example: 1) Call check_auth_status first 2) Call authenticate if auth_needed is true 3) Call list_events to find the event 4) Then cancel_event with parameters: { "eventId": "AAMkAEV1...", "comment": "This meeting has been cancelled due to a scheduling conflict. We will reschedule soon." }',
   {
     userId: z.string().optional().describe('User identifier (optional, defaults to "default")'),
     eventId: z.string().describe('ID of the calendar event to cancel'),
     comment: z.string().optional().describe('Optional cancellation message')
   },
-  withErrorHandling(cancelEventHandler),
-  {
-    description: 'Cancel a calendar event and notify attendees',
-    usage: `Use to cancel a meeting you organized and notify participants. Call check_auth_status first to determine if authentication is needed, then list_events to find the event to cancel.
-
-Example:
-1) Call check_auth_status first
-2) Call authenticate if auth_needed is true
-3) Call list_events to find the event
-4) Then cancel_event with parameters:
-   {
-     "eventId": "AAMkAEV1...",
-     "comment": "This meeting has been cancelled due to a scheduling conflict. We will reschedule soon."
-   }`
-  }
+  withErrorHandling(cancelEventHandler)
 );
 
 // Add missing folder tools
 server.tool(
   "get_folder",
+  'Get details of a specific folder. Use to retrieve information about a mail folder. Call check_auth_status first to determine if authentication is needed, then list_folders to find the folder IDs. Example: 1) Call check_auth_status first 2) Call authenticate if auth_needed is true 3) Call list_folders to get folder IDs 4) Then get_folder with parameters: { "folderId": "AAMkFOL1..." }',
   {
     userId: z.string().optional().describe('User identifier (optional, defaults to "default")'),
     folderId: z.string().describe('ID of the folder - obtained from list_folders')
   },
-  withErrorHandling(getFolderHandler),
-  {
-    description: 'Get details of a specific folder',
-    usage: `Use to retrieve information about a mail folder. Call check_auth_status first to determine if authentication is needed, then list_folders to find the folder IDs.
-
-Example:
-1) Call check_auth_status first
-2) Call authenticate if auth_needed is true
-3) Call list_folders to get folder IDs
-4) Then get_folder with parameters:
-   {
-     "folderId": "AAMkFOL1..."
-   }`
-  }
+  withErrorHandling(getFolderHandler)
 );
 
 server.tool(
   "create_folder",
+  'Create a new mail folder. Use to organize emails by creating new folders. Call check_auth_status first to determine if authentication is needed, then optionally list_folders to get the parentFolderId if you want to create a subfolder. Example: 1) Call check_auth_status first 2) Call authenticate if auth_needed is true 3) Then create_folder with parameters: { "displayName": "Project X" } For creating a subfolder: 1) Call check_auth_status 2) Call authenticate if needed 3) Call list_folders to get parent folder ID 4) Then create_folder with parameters: { "displayName": "Meeting Notes", "parentFolderId": "AAMkFOL1..." }',
   {
     userId: z.string().optional().describe('User identifier (optional, defaults to "default")'),
     displayName: z.string().describe('Name of the new folder to create'),
     parentFolderId: z.string().optional().describe('ID of the parent folder where the new folder should be created - obtained from list_folders')
   },
-  withErrorHandling(createFolderHandler),
-  {
-    description: 'Create a new mail folder',
-    usage: `Use to organize emails by creating new folders. Call check_auth_status first to determine if authentication is needed, then optionally list_folders to get the parentFolderId if you want to create a subfolder.
-
-Example:
-1) Call check_auth_status first
-2) Call authenticate if auth_needed is true
-3) Then create_folder with parameters:
-   {
-     "displayName": "Project X"
-   }
-   
-For creating a subfolder:
-1) Call check_auth_status
-2) Call authenticate if needed
-3) Call list_folders to get parent folder ID
-4) Then create_folder with parameters:
-   {
-     "displayName": "Meeting Notes",
-     "parentFolderId": "AAMkFOL1..."
-   }`
-  }
+  withErrorHandling(createFolderHandler)
 );
 
 server.tool(
   "update_folder",
+  'Update a mail folder. Use to rename an existing folder. Call check_auth_status first to determine if authentication is needed, then list_folders to get the folder ID. Example: 1) Call check_auth_status first 2) Call authenticate if auth_needed is true 3) Call list_folders to find the folder to rename 4) Then update_folder with parameters: { "folderId": "AAMkFOL1...", "displayName": "New Folder Name" }',
   {
     userId: z.string().optional().describe('User identifier (optional, defaults to "default")'),
     folderId: z.string().describe('ID of the folder to update'),
     displayName: z.string().describe('New name for the folder')
   },
-  withErrorHandling(updateFolderHandler),
-  {
-    description: 'Update a mail folder',
-    usage: `Use to rename an existing folder. Call check_auth_status first to determine if authentication is needed, then list_folders to get the folder ID.
-
-Example:
-1) Call check_auth_status first
-2) Call authenticate if auth_needed is true
-3) Call list_folders to find the folder to rename
-4) Then update_folder with parameters:
-   {
-     "folderId": "AAMkFOL1...",
-     "displayName": "New Folder Name"
-   }`
-  }
+  withErrorHandling(updateFolderHandler)
 );
 
 server.tool(
   "delete_folder",
+  'Delete a mail folder. Use to remove an existing folder. Call check_auth_status first to determine if authentication is needed, then list_folders to identify the folder to delete. Be careful as this permanently removes the folder and all its contents. Example: 1) Call check_auth_status first 2) Call authenticate if auth_needed is true 3) Call list_folders to find the folder to delete 4) Then delete_folder with parameters: { "folderId": "AAMkFOL1..." }',
   {
     userId: z.string().optional().describe('User identifier (optional, defaults to "default")'),
     folderId: z.string().describe('ID of the folder to delete - obtained from list_folders')
   },
-  withErrorHandling(deleteFolderHandler),
-  {
-    description: 'Delete a mail folder',
-    usage: `Use to remove an existing folder. Call check_auth_status first to determine if authentication is needed, then list_folders to identify the folder to delete. Be careful as this permanently removes the folder and all its contents.
-
-Example:
-1) Call check_auth_status first
-2) Call authenticate if auth_needed is true
-3) Call list_folders to find the folder to delete
-4) Then delete_folder with parameters:
-   {
-     "folderId": "AAMkFOL1..."
-   }`
-  }
+  withErrorHandling(deleteFolderHandler)
 );
 
 server.tool(
   "move_folder",
+  'Move a folder to a new parent folder. Use to reorganize the folder structure. Call check_auth_status first to determine if authentication is needed, then list_folders to get the IDs of both the folder to move and the destination folder. Example: 1) Call check_auth_status first 2) Call authenticate if auth_needed is true 3) Call list_folders to get folder IDs 4) Then move_folder with parameters: { "folderId": "AAMkFOL1...", "destinationFolderId": "AAMkFOL2..." }',
   {
     userId: z.string().optional().describe('User identifier (optional, defaults to "default")'),
     folderId: z.string().describe('ID of the folder to move - obtained from list_folders'),
     destinationFolderId: z.string().describe('ID of the destination parent folder - obtained from list_folders')
   },
-  withErrorHandling(moveFolderHandler),
-  {
-    description: 'Move a folder to a new parent folder',
-    usage: `Use to reorganize the folder structure. Call check_auth_status first to determine if authentication is needed, then list_folders to get the IDs of both the folder to move and the destination folder.
-
-Example:
-1) Call check_auth_status first
-2) Call authenticate if auth_needed is true
-3) Call list_folders to get folder IDs
-4) Then move_folder with parameters:
-   {
-     "folderId": "AAMkFOL1...",
-     "destinationFolderId": "AAMkFOL2..."
-   }`
-  }
+  withErrorHandling(moveFolderHandler)
 );
 
 server.tool(
   "copy_emails",
+  'Copy emails to a folder. Use to keep emails in the original location while also placing them in another folder. Call check_auth_status first to determine if authentication is needed, then list_emails to get email IDs and list_folders to get the destination folder ID. Example: 1) Call check_auth_status first 2) Call authenticate if auth_needed is true 3) Call list_emails to find emails to copy 4) Call list_folders to find or create the destination folder 5) Then copy_emails with parameters: { "emailIds": ["AAMkADE1...", "AAMkADE2..."], "destinationFolderId": "AAMkFOL1..." }',
   {
     userId: z.string().optional().describe('User identifier (optional, defaults to "default")'),
     emailIds: z.array(z.string()).describe('Array of email IDs to copy'),
     destinationFolderId: z.string().describe('Destination folder ID')
   },
-  withErrorHandling(copyEmailsHandler),
-  {
-    description: 'Copy emails to a folder',
-    usage: `Use to keep emails in the original location while also placing them in another folder. Call check_auth_status first to determine if authentication is needed, then list_emails to get email IDs and list_folders to get the destination folder ID.
-
-Example:
-1) Call check_auth_status first
-2) Call authenticate if auth_needed is true
-3) Call list_emails to find emails to copy
-4) Call list_folders to find or create the destination folder
-5) Then copy_emails with parameters:
-   {
-     "emailIds": ["AAMkADE1...", "AAMkADE2..."],
-     "destinationFolderId": "AAMkFOL1..."
-   }`
-  }
+  withErrorHandling(copyEmailsHandler)
 );
 
 // Add rules tools
 server.tool(
   "list_rules",
+  'List inbox rules. Use to see all inbox rules configured by the user. Call check_auth_status first to determine if authentication is needed.',
   {
     userId: z.string().optional().describe('User identifier (optional, defaults to "default")')
   },
-  withErrorHandling(listRulesHandler),
-  {
-    description: 'List inbox rules',
-    usage: `Use to see all inbox rules configured by the user. Call check_auth_status first to determine if authentication is needed.
-
-Example:
-1) Call check_auth_status first
-2) Call authenticate if auth_needed is true
-3) Then list_rules with parameters:
-   {
-     "userId": "default"
-   }`
-  }
+  withErrorHandling(listRulesHandler)
 );
 
 server.tool(
   "get_rule",
+  'Get details of a specific inbox rule. Use to retrieve detailed information about an inbox rule. Call check_auth_status first to determine if authentication is needed, then list_rules to get rule IDs. Example: 1) Call check_auth_status first 2) Call authenticate if auth_needed is true 3) Call list_rules to get rule IDs 4) Then get_rule with parameters: { "ruleId": "RULE123..." }',
   {
     userId: z.string().optional().describe('User identifier (optional, defaults to "default")'),
     ruleId: z.string().describe('ID of the rule')
   },
-  withErrorHandling(getRuleHandler),
-  {
-    description: 'Get details of a specific inbox rule',
-    usage: `Use to retrieve detailed information about an inbox rule. Call check_auth_status first to determine if authentication is needed, then list_rules to get rule IDs.
-
-Example:
-1) Call check_auth_status first
-2) Call authenticate if auth_needed is true
-3) Call list_rules to get rule IDs
-4) Then get_rule with parameters:
-   {
-     "ruleId": "RULE123..."
-   }`
-  }
+  withErrorHandling(getRuleHandler)
 );
 
 server.tool(
   "create_rule",
+  'Create a new inbox rule. Use to automate email organization by creating rules. Call check_auth_status first to determine if authentication is needed. Example: 1) Call check_auth_status first 2) Call authenticate if auth_needed is true 3) Then create_rule with parameters: { "displayName": "Move Project X Emails", "conditions": { "subjectContains": ["Project X"] }, "actions": { "moveToFolder": "AAMkFOL1..." }, "isEnabled": true } Note: The format of conditions and actions depends on the type of rule you want to create.',
   {
     userId: z.string().optional().describe('User identifier (optional, defaults to "default")'),
     displayName: z.string().describe('Name for the rule'),
@@ -1390,32 +957,12 @@ server.tool(
     actions: z.object({}).describe('Actions to take when conditions are met'),
     isEnabled: z.boolean().optional().describe('Whether the rule is enabled')
   },
-  withErrorHandling(createRuleHandler),
-  {
-    description: 'Create a new inbox rule',
-    usage: `Use to automate email organization by creating rules. Call check_auth_status first to determine if authentication is needed.
-
-Example:
-1) Call check_auth_status first
-2) Call authenticate if auth_needed is true
-3) Then create_rule with parameters:
-   {
-     "displayName": "Move Project X Emails",
-     "conditions": {
-       "subjectContains": ["Project X"]
-     },
-     "actions": {
-       "moveToFolder": "AAMkFOL1..."
-     },
-     "isEnabled": true
-   }
-   
-Note: The format of conditions and actions depends on the type of rule you want to create.`
-  }
+  withErrorHandling(createRuleHandler)
 );
 
 server.tool(
   "update_rule",
+  'Update an existing inbox rule. Use to modify the conditions or actions of an existing rule. Call check_auth_status first to determine if authentication is needed, then list_rules and get_rule to find the rule to update. Example: 1) Call check_auth_status first 2) Call authenticate if auth_needed is true 3) Call list_rules to find the rule 4) Call get_rule to see its current configuration 5) Then update_rule with parameters: { "ruleId": "RULE123...", "displayName": "Updated Rule Name", "isEnabled": false } Only include the fields you want to change. Omitted fields will keep their current values.',
   {
     userId: z.string().optional().describe('User identifier (optional, defaults to "default")'),
     ruleId: z.string().describe('ID of the rule to update'),
@@ -1424,47 +971,17 @@ server.tool(
     actions: z.object({}).optional().describe('New actions to take when conditions are met'),
     isEnabled: z.boolean().optional().describe('Whether the rule is enabled')
   },
-  withErrorHandling(updateRuleHandler),
-  {
-    description: 'Update an existing inbox rule',
-    usage: `Use to modify the conditions or actions of an existing rule. Call check_auth_status first to determine if authentication is needed, then list_rules and get_rule to find the rule to update.
-
-Example:
-1) Call check_auth_status first
-2) Call authenticate if auth_needed is true
-3) Call list_rules to find the rule
-4) Call get_rule to see its current configuration
-5) Then update_rule with parameters:
-   {
-     "ruleId": "RULE123...",
-     "displayName": "Updated Rule Name",
-     "isEnabled": false
-   }
-   
-Only include the fields you want to change. Omitted fields will keep their current values.`
-  }
+  withErrorHandling(updateRuleHandler)
 );
 
 server.tool(
   "delete_rule",
+  'Delete an inbox rule. Use to remove an existing inbox rule. Call check_auth_status first to determine if authentication is needed, then list_rules to find the rule to delete. Example: 1) Call check_auth_status first 2) Call authenticate if auth_needed is true 3) Call list_rules to find the rule to delete 4) Then delete_rule with parameters: { "ruleId": "RULE123..." }',
   {
     userId: z.string().optional().describe('User identifier (optional, defaults to "default")'),
     ruleId: z.string().describe('ID of the rule to delete')
   },
-  withErrorHandling(deleteRuleHandler),
-  {
-    description: 'Delete an inbox rule',
-    usage: `Use to remove an existing inbox rule. Call check_auth_status first to determine if authentication is needed, then list_rules to find the rule to delete.
-
-Example:
-1) Call check_auth_status first
-2) Call authenticate if auth_needed is true
-3) Call list_rules to find the rule to delete
-4) Then delete_rule with parameters:
-   {
-     "ruleId": "RULE123..."
-   }`
-  }
+  withErrorHandling(deleteRuleHandler)
 );
 
 // Register resources about tool relationships
@@ -1559,6 +1076,7 @@ server.resource('tool-relationships', {
 // Add a tool helper for finding related tools
 server.tool(
   "get_tool_info",
+  'Get information about a specific tool and its relationships. Use to understand how tools relate to each other and which tools should be called first. For tools that have authenticate as a dependency, check_auth_status should be called first to determine if authentication is actually needed.',
   {
     toolName: z.string().describe('Name of the tool to get information about'),
     includeRelated: z.boolean().optional().describe('Whether to include related tools in the response')
@@ -1641,21 +1159,6 @@ server.tool(
         text: JSON.stringify(result)
       }]
     };
-  },
-  {
-    description: 'Get information about a specific tool and its relationships',
-    usage: `Use to understand how tools relate to each other and which tools should be called first. 
-    
-Example:
-1) Call get_tool_info with parameters:
-   {
-     "toolName": "create_event",
-     "includeRelated": true
-   }
-
-This will return information about the create_event tool, its dependencies, related tools, and workflows it's part of.
-
-Important: For tools that have authenticate as a dependency, check_auth_status should be called first to determine if authentication is actually needed.`
   }
 );
 
@@ -1871,6 +1374,7 @@ server.resource('available-sequences', {
 // Add a tool for getting sequence information
 server.tool(
   "get_sequence",
+  'Get information about available tool sequences for common workflows. Use to discover predefined sequences of tools for common tasks. This helps understand the recommended order of tool calls for different workflows.',
   {
     sequenceName: z.string().optional().describe('Name of the sequence to get details for'),
     category: z.string().optional().describe('Category of sequences to list (email, calendar, organization)')
@@ -2009,33 +1513,13 @@ server.tool(
       };
     }
   },
-  {
-    description: 'Get information about available tool sequences for common workflows',
-    usage: `Use to discover predefined sequences of tools for common tasks. This helps understand the recommended order of tool calls for different workflows.
-
-Example for listing all categories:
-1) Call get_sequence with no parameters:
-   {}
-
-Example for listing sequences in a category:
-1) Call get_sequence with category parameter:
-   {
-     "category": "email"
-   }
-
-Example for getting details of a specific sequence:
-1) Call get_sequence with sequenceName parameter:
-   {
-     "sequenceName": "send_email_with_attachment"
-   }
-
-This will return the full sequence of tools to call, along with example parameters for each step.`
-  }
+  'Get information about available tool sequences for common workflows. Use to discover predefined sequences of tools for common tasks. This helps understand the recommended order of tool calls for different workflows.'
 );
 
 // Add a tool for suggesting the appropriate workflow for a task
 server.tool(
   "suggest_workflow",
+  'Suggest the appropriate workflow for a given task. Provide a clear task description to get recommended tool sequences.',
   {
     task: z.string().describe('Description of the task you want to accomplish')
   },
@@ -2169,18 +1653,6 @@ server.tool(
         }]
       };
     }
-  },
-  {
-    description: 'Suggest the appropriate workflow for a given task',
-    usage: `Use this tool to find the recommended sequence of tools for a specific task. Provide a clear description of what you want to accomplish.
-
-Example:
-1) Call suggest_workflow with a task description:
-   {
-     "task": "I want to send an email with a PDF attachment"
-   }
-
-This will return a suggested workflow with the sequence of tools to call and example parameters for each step.`
   }
 );
 
@@ -2267,3 +1739,4 @@ server.connect(transport).then(() => {
   logger.error('Failed to start MCP server:', error);
   process.exit(1);
 });
+

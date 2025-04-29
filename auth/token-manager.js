@@ -69,6 +69,7 @@ async function getToken(userId) {
   
   // Debug log the token data without revealing the full token
   logger.info(`Token found for user ${userId} with scopes: ${tokenData.scope || 'none specified'}`);
+  logger.info(`Token expires at: ${new Date(tokenData.expires_at).toISOString()}, now: ${new Date().toISOString()}`);
   
   // Check if token has scopes based on the API being accessed (inferred from the module importing this)
   // Include all possible scopes to avoid refresh loops
@@ -105,19 +106,33 @@ async function getToken(userId) {
     }
   }
   
-  // Check if token is expired or about to expire (within 5 minutes)
+  // Check if token is expired or about to expire (within 4 hours)
   const now = Date.now();
   const expiresAt = tokenData.expires_at || 0;
   
-  if (now >= expiresAt - 5 * 60 * 1000) {
-    logger.info(`Token for user ${userId} is expired or about to expire, attempting refresh`);
+  if (now >= expiresAt - 4 * 60 * 60 * 1000) {
+    logger.info(`Token for user ${userId} is expired or about to expire within 4 hours, attempting refresh`);
     
     // Attempt to refresh the token
     try {
+      // If the token is not actually expired yet, just return the current token
+      // This helps in cases where refresh token operations are failing
+      if (now < expiresAt) {
+        logger.info(`Token not actually expired yet, using current token to avoid refresh issues`);
+        return tokenData;
+      }
+      
       const refreshedToken = await refreshToken(userId, tokenData.refresh_token);
       return refreshedToken;
     } catch (error) {
       logger.error(`Failed to refresh token for user ${userId}: ${error.message}`);
+      
+      // If token is not actually expired yet, return the current token despite refresh failure
+      if (now < expiresAt) {
+        logger.info(`Using current token despite refresh failure as it's not expired yet`);
+        return tokenData;
+      }
+      
       return null;
     }
   }
@@ -161,8 +176,8 @@ async function refreshToken(userId, refreshToken) {
     // Log the received scopes
     logger.info(`Token refreshed with scopes: ${tokenData.scope || 'none specified'}`);
     
-    // Calculate expiration time
-    const expiresIn = tokenData.expires_in || 3600;
+    // Set expiration time to 24 hours (86400 seconds) or use the token's expires_in if lower
+    const expiresIn = Math.min(tokenData.expires_in || 3600, 86400);
     const expiresAt = Date.now() + expiresIn * 1000;
     
     // Create updated token data

@@ -2,6 +2,7 @@ const axios = require('axios');
 const config = require('../config');
 const logger = require('../utils/logger');
 const { saveToken, deleteToken, listUsers } = require('./token-manager');
+const { normalizeParameters, lookupDefaultUser } = require('../utils/parameter-helpers');
 
 /**
  * Tool handler for authenticating with Microsoft Graph API
@@ -100,21 +101,36 @@ async function authenticateHandler(params = {}) {
  * @returns {Promise<Object>} - Authentication status
  */
 async function checkAuthStatusHandler(params = {}) {
+  const normalizedParams = normalizeParameters(params);
   const authServerUrl = `http://localhost:${config.server.authPort}`;
   
   try {
     // Request authentication status from auth server
     const response = await axios.get(`${authServerUrl}/auth/status`);
     
+    const responseData = { ...response.data };
+    
+    // For Claude Desktop compatibility, support 'default' user ID
+    if (normalizedParams.userId === 'default') {
+      // Get the first actual user if available
+      const actualUserId = await lookupDefaultUser();
+      
+      if (actualUserId) {
+        logger.info(`Mapping 'default' userId to actual user: ${actualUserId}`);
+        responseData.userId = actualUserId;
+        responseData.authenticated = true;
+      }
+    }
+    
     return {
       content: [{
         type: "text",
         text: JSON.stringify({
-          ...response.data,
+          ...responseData,
           // Add clear instructions based on status
-          instruction: response.data.isAuthenticating 
+          instruction: responseData.isAuthenticating 
             ? 'Authentication in progress. Please complete the authentication in your browser.'
-            : response.data.userId
+            : responseData.userId
               ? 'You are authenticated. You can now use other tools that require authentication.'
               : 'Not authenticated. Please use the authenticate tool to start the authentication process.'
         })

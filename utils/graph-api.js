@@ -3,6 +3,7 @@ const config = require('../config');
 const logger = require('./logger');
 const { getToken } = require('../auth/token-manager');
 const { rateLimiter } = require('./rate-limiter');
+const { lookupDefaultUser } = require('./parameter-helpers');
 
 /**
  * Microsoft Graph API client wrapper
@@ -28,16 +29,30 @@ class GraphApiClient {
    * @returns {Promise<Object>} - Axios request config
    */
   async createRequestConfig(method, endpoint, data = null, params = null, headers = {}) {
+    // Handle 'default' userId special case for Claude Desktop compatibility
+    let effectiveUserId = this.userId;
+    
+    if (this.userId === 'default') {
+      logger.debug("'default' userId detected, looking up first available user");
+      const actualUserId = await lookupDefaultUser();
+      if (actualUserId) {
+        effectiveUserId = actualUserId;
+        logger.debug(`Mapped 'default' to actual userId: ${actualUserId}`);
+      } else {
+        logger.error("No available user found to map from 'default'");
+      }
+    }
+    
     // Get access token
-    const tokenInfo = await getToken(this.userId);
+    const tokenInfo = await getToken(effectiveUserId);
     if (!tokenInfo || !tokenInfo.access_token) {
-      logger.error(`No valid access token found for user '${this.userId}'`);
+      logger.error(`No valid access token found for user '${effectiveUserId}'`);
       logger.info('Please authenticate with the proper scopes before trying again');
       throw new Error('No valid access token found. Please authenticate first.');
     }
     
     // Log success but not the token itself
-    logger.debug(`Successfully retrieved access token for user '${this.userId}'`);
+    logger.debug(`Successfully retrieved access token for user '${effectiveUserId}'`);
     
     return {
       method,
