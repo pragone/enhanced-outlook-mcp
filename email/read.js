@@ -1,6 +1,6 @@
 const config = require('../config');
 const logger = require('../utils/logger');
-const { GraphApiClient } = require('../utils/graph-api');
+const { createGraphClient } = require('../utils/graph-api-adapter');
 const { listUsers } = require('../auth/token-manager');
 
 /**
@@ -204,7 +204,7 @@ async function readEmailHandler(params = {}) {
     
     logger.info(`Reading email ${finalMessageId} for user ${userId}`);
     
-    const graphClient = new GraphApiClient(userId);
+    const graphClient = await createGraphClient(userId);
     
     // Get email with detailed content
     const email = await graphClient.get(`/me/messages/${finalMessageId}`, {
@@ -543,7 +543,7 @@ async function markEmailHandler(params = {}) {
     
     logger.info(`Marking email ${finalEmailId} as ${isRead ? 'read' : 'unread'} for user ${userId}`);
     
-    const graphClient = new GraphApiClient(userId);
+    const graphClient = await createGraphClient(userId);
     
     // Update the read status
     await graphClient.patch(`/me/messages/${finalEmailId}`, {

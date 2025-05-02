@@ -1,6 +1,6 @@
 const config = require('../config');
 const logger = require('../utils/logger');
-const { GraphApiClient } = require('../utils/graph-api');
+const { createGraphClient } = require('../utils/graph-api-adapter');
 const { listUsers } = require('../auth/token-manager');
 
 /**
@@ -66,7 +66,7 @@ async function moveEmailsHandler(params = {}) {
   try {
     logger.info(`Moving ${emailIds.length} emails to folder ${destinationFolderId} for user ${userId}`);
     
-    const graphClient = new GraphApiClient(userId);
+    const graphClient = await createGraphClient(userId);
     
     // Track successful and failed moves
     const results = {
@@ -194,7 +194,7 @@ async function moveFolderHandler(params = {}) {
   try {
     logger.info(`Moving folder ${folderId} to parent folder ${destinationFolderId} for user ${userId}`);
     
-    const graphClient = new GraphApiClient(userId);
+    const graphClient = await createGraphClient(userId);
     
     // Get the folder to preserve its name
     const folder = await graphClient.get(`/me/mailFolders/${folderId}`, {
@@ -376,7 +376,7 @@ async function copyEmailsHandler(params = {}) {
   try {
     logger.info(`Copying ${emailIds.length} emails to folder ${destinationFolderId} for user ${userId}`);
     
-    const graphClient = new GraphApiClient(userId);
+    const graphClient = await createGraphClient(userId);
     
     // Track successful and failed copies
     const results = {

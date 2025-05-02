@@ -1,24 +1,57 @@
 const axios = require('axios');
 const config = require('../config');
 const logger = require('./logger');
-const { getToken } = require('../auth/token-manager');
 const { rateLimiter } = require('./rate-limiter');
 const { lookupDefaultUser } = require('./parameter-helpers');
 
 /**
- * Microsoft Graph API client wrapper
+ * Enhanced Microsoft Graph API client with integrated auth
+ * This client works directly with the new AuthService
  */
-class GraphApiClient {
+class EnhancedGraphApiClient {
   /**
    * Create a new Graph API client
-   * @param {string} userId - User ID for token retrieval
+   * @param {Object} authService - The AuthService instance
+   * @param {string} [userId='default'] - User ID for multi-user support
    */
-  constructor(userId) {
+  constructor(authService, userId = 'default') {
+    if (!authService) {
+      throw new Error('AuthService is required to create an EnhancedGraphApiClient');
+    }
+    this.authService = authService;
     this.userId = userId;
     this.baseUrl = config.microsoft.apiBaseUrl;
     this.requestCount = 0;
+    this.msGraphClient = null;
   }
-  
+
+  /**
+   * Initialize the Microsoft Graph client
+   * @returns {Promise<Client>} Microsoft Graph client instance
+   * @private
+   */
+  async _initializeGraphClient() {
+    if (this.msGraphClient) {
+      return this.msGraphClient;
+    }
+
+    try {
+      // Get token directly from AuthService
+      const token = await this.authService.getAccessToken();
+      if (!token) {
+        throw new Error('Failed to get access token');
+      }
+
+      // Create the client without initialization to avoid circular dependencies
+      this.msGraphClient = await this.authService.getGraphClient();
+      logger.info('Graph client initialized successfully');
+      return this.msGraphClient;
+    } catch (error) {
+      logger.error(`Failed to initialize Graph client: ${error.message}`);
+      throw new Error(`Graph client initialization failed: ${error.message}`);
+    }
+  }
+
   /**
    * Create an authenticated request config
    * @param {string} method - HTTP method
@@ -29,36 +62,22 @@ class GraphApiClient {
    * @returns {Promise<Object>} - Axios request config
    */
   async createRequestConfig(method, endpoint, data = null, params = null, headers = {}) {
-    // Handle 'default' userId special case for Claude Desktop compatibility
-    let effectiveUserId = this.userId;
-    
-    if (this.userId === 'default') {
-      logger.debug("'default' userId detected, looking up first available user");
-      const actualUserId = await lookupDefaultUser();
-      if (actualUserId) {
-        effectiveUserId = actualUserId;
-        logger.debug(`Mapped 'default' to actual userId: ${actualUserId}`);
-      } else {
-        logger.error("No available user found to map from 'default'");
-      }
-    }
-    
-    // Get access token
-    const tokenInfo = await getToken(effectiveUserId);
-    if (!tokenInfo || !tokenInfo.access_token) {
-      logger.error(`No valid access token found for user '${effectiveUserId}'`);
+    // Get access token from AuthService
+    const accessToken = await this.authService.getAccessToken();
+    if (!accessToken) {
+      logger.error('No valid access token found');
       logger.info('Please authenticate with the proper scopes before trying again');
       throw new Error('No valid access token found. Please authenticate first.');
     }
     
     // Log success but not the token itself
-    logger.debug(`Successfully retrieved access token for user '${effectiveUserId}'`);
+    logger.debug(`Successfully retrieved access token for user '${this.userId}'`);
     
     return {
       method,
       url: `${this.baseUrl}/${endpoint.replace(/^\//, '')}`,
       headers: {
-        'Authorization': `Bearer ${tokenInfo.access_token}`,
+        'Authorization': `Bearer ${accessToken}`,
         'Content-Type': 'application/json',
         ...headers
       },
@@ -109,7 +128,39 @@ class GraphApiClient {
       
       return response.data;
     } catch (error) {
-      this.handleRequestError(error, method, endpoint);
+      // Handle token expiration and auto-refresh
+      if (error.response && error.response.status === 401) {
+        logger.warn('Received 401 error, token may be expired. Attempting to refresh...');
+        
+        try {
+          // Force token refresh and retry once
+          await this.authService.getAccessToken(true); // Force refresh
+          
+          // Retry the request with the new token
+          logger.info('Token refreshed, retrying request');
+          
+          const retryConfig = await this.createRequestConfig(
+            method,
+            endpoint,
+            data,
+            params,
+            options.headers
+          );
+          
+          const retryResponse = await axios(retryConfig);
+          
+          if (options.returnFullResponse) {
+            return retryResponse;
+          }
+          
+          return retryResponse.data;
+        } catch (refreshError) {
+          logger.error(`Token refresh failed: ${refreshError.message}`);
+          this.handleRequestError(error, method, endpoint);
+        }
+      } else {
+        this.handleRequestError(error, method, endpoint);
+      }
     }
   }
   
@@ -251,11 +302,47 @@ class GraphApiClient {
     }
     
     if (nextLink && pageCount >= maxPages) {
-      logger.warn(`Reached maximum page limit (${maxPages}) for paginated request to ${endpoint}`);
+      logger.warn(`Reached maximum page limit (${maxPages}), results may be incomplete`);
     }
     
     return allResults;
   }
+
+  /**
+   * Execute a Microsoft Graph SDK batch request with multiple operations
+   * @param {Array<Object>} requests - Array of request objects with id, method, url, [headers], [body]
+   * @returns {Promise<Object>} - Batch response
+   */
+  async batchRequest(requests) {
+    if (!Array.isArray(requests) || requests.length === 0) {
+      throw new Error('Batch requests must be a non-empty array');
+    }
+
+    const batchRequestBody = {
+      requests: requests.map(req => ({
+        id: req.id,
+        method: req.method,
+        url: req.url.replace(/^\/v1.0\//, ''), // Remove API version if present
+        headers: req.headers || {},
+        body: req.body
+      }))
+    };
+
+    return this.post('$batch', batchRequestBody);
+  }
 }
 
-module.exports = { GraphApiClient };
+/**
+ * Create an enhanced Graph API client with the provided auth service
+ * @param {Object} authService - AuthService instance
+ * @param {string} [userId='default'] - User ID for multi-user support
+ * @returns {EnhancedGraphApiClient} - Graph API client instance
+ */
+function createEnhancedGraphClient(authService, userId = 'default') {
+  return new EnhancedGraphApiClient(authService, userId);
+}
+
+module.exports = {
+  EnhancedGraphApiClient,
+  createEnhancedGraphClient
+}; 

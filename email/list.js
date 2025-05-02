@@ -1,8 +1,9 @@
 const config = require('../config');
 const logger = require('../utils/logger');
-const { GraphApiClient } = require('../utils/graph-api');
+const graphAdapter = require('../utils/graph-api-adapter');
 const { listUsers } = require('../auth/token-manager');
 const { buildQueryParams } = require('../utils/odata-helpers');
+const auth = require('../auth/index');
 
 /**
  * List emails from a mailbox
@@ -136,19 +137,48 @@ async function listEmailsHandler(params = {}) {
     }
     
     if (!userId) {
-      const users = await listUsers();
-      if (users.length === 0) {
-        return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({
-              status: 'error',
-              message: 'No authenticated users found. Please authenticate first.'
-            })
-          }]
-        };
+      // Check authentication status with the unified auth
+      try {
+        const authStatusResult = await auth.checkAuthStatusHandler();
+        const authStatusData = JSON.parse(authStatusResult.content[0].text);
+        
+        if (authStatusData.status === 'authenticated' && authStatusData.user?.email) {
+          userId = authStatusData.user.email;
+          logger.info(`Using authenticated user ID from session: ${userId}`);
+        } else {
+          // Fall back to old method
+          const users = await listUsers();
+          if (users.length === 0) {
+            return {
+              content: [{
+                type: "text",
+                text: JSON.stringify({
+                  status: 'error',
+                  message: 'No authenticated users found. Please authenticate first.'
+                })
+              }]
+            };
+          }
+          userId = users.length === 1 ? users[0] : requestParams.userId;
+        }
+      } catch (authError) {
+        logger.error(`Error checking auth status: ${authError.message}`);
+        // Fall back to old method
+        const users = await listUsers();
+        if (users.length === 0) {
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                status: 'error',
+                message: 'No authenticated users found. Please authenticate first.'
+              })
+            }]
+          };
+        }
+        userId = users.length === 1 ? users[0] : requestParams.userId;
       }
-      userId = users.length === 1 ? users[0] : requestParams.userId;
+      
       if (!userId) {
         return {
           content: [{
@@ -169,49 +199,55 @@ async function listEmailsHandler(params = {}) {
     
     logger.info(`Listing emails for user ${userId} in folder ${folderId}`);
     
-    const graphClient = new GraphApiClient(userId);
-    
-    // Determine endpoint based on folder ID
-    let endpoint;
-    if (folderId.toLowerCase() === 'inbox') {
-      endpoint = '/me/mailFolders/inbox/messages';
-    } else if (folderId.toLowerCase() === 'drafts') {
-      endpoint = '/me/mailFolders/drafts/messages';
-    } else if (folderId.toLowerCase() === 'sentitems') {
-      endpoint = '/me/mailFolders/sentItems/messages';
-    } else if (folderId.toLowerCase() === 'deleteditems') {
-      endpoint = '/me/mailFolders/deletedItems/messages';
-    } else {
-      endpoint = `/me/mailFolders/${folderId}/messages`;
+    // Use the Graph API adapter instead of directly creating a client
+    try {
+      // Determine folder name for the query
+      let folderName = folderId;
+      if (folderId.toLowerCase() === 'sentitems') folderName = 'sentItems';
+      if (folderId.toLowerCase() === 'deleteditems') folderName = 'deletedItems';
+      
+      const options = {
+        folderId: folderName,
+        top: limit,
+        filter: requestParams.filter,
+        orderBy: requestParams.orderBy || 'receivedDateTime desc',
+        skip: requestParams.skip || 0
+      };
+      
+      // If search is specified, use it and omit orderBy (they're incompatible)
+      if (requestParams.search) {
+        options.search = requestParams.search;
+        delete options.orderBy;
+      }
+      
+      // Use the email API from the graph adapter
+      const response = await graphAdapter.email.listMessages(userId, options);
+      
+      // Process and format the response
+      const emails = response.value.map(formatEmailResponse);
+      
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            emails,
+            count: emails.length,
+            folder: folderId
+          })
+        }]
+      };
+    } catch (error) {
+      logger.error(`Error listing emails: ${error.message}`);
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: 'error',
+            message: `Failed to list emails: ${error.message}`
+          })
+        }]
+      };
     }
-    
-    // Build query parameters
-    const queryParams = buildQueryParams({
-      select: requestParams.fields || config.email.defaultFields,
-      top: limit,
-      filter: requestParams.filter,
-      orderBy: requestParams.orderBy || { receivedDateTime: 'desc' },
-      skip: requestParams.skip || 0,
-      search: requestParams.search
-    });
-    
-    // Get emails
-    const emails = await graphClient.getPaginated(endpoint, queryParams, {
-      maxPages: requestParams.maxPages || 1
-    });
-    
-    return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          status: 'success',
-          folder: folderId,
-          count: emails.length,
-          emails: emails.map(email => formatEmailResponse(email)),
-          hasMore: emails.length >= limit
-        })
-      }]
-    };
   } catch (error) {
     logger.error(`Error listing emails: ${error.message}`);
     

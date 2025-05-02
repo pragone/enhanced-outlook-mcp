@@ -1,6 +1,6 @@
 const config = require('../config');
 const logger = require('../utils/logger');
-const { GraphApiClient } = require('../utils/graph-api');
+const { createGraphClient } = require('../utils/graph-api-adapter');
 const { listUsers } = require('../auth/token-manager');
 
 /**
@@ -78,7 +78,7 @@ async function createRuleHandler(params = {}) {
   try {
     logger.info(`Creating mail rule "${params.displayName}" for user ${userId}`);
     
-    const graphClient = new GraphApiClient(userId);
+    const graphClient = await createGraphClient(userId);
     
     // Format conditions object
     const conditions = formatRuleConditions(params.conditions);
@@ -174,7 +174,7 @@ async function updateRuleHandler(params = {}) {
   try {
     logger.info(`Updating mail rule ${ruleId} for user ${userId}`);
     
-    const graphClient = new GraphApiClient(userId);
+    const graphClient = await createGraphClient(userId);
     
     // Prepare update data
     const updateData = {};
@@ -277,7 +277,7 @@ async function deleteRuleHandler(params = {}) {
   try {
     logger.info(`Deleting mail rule ${ruleId} for user ${userId}`);
     
-    const graphClient = new GraphApiClient(userId);
+    const graphClient = await createGraphClient(userId);
     
     // Delete the rule
     await graphClient.delete(`/me/mailFolders/inbox/messageRules/${ruleId}`);

@@ -1,6 +1,6 @@
 const config = require('../config');
 const logger = require('../utils/logger');
-const { GraphApiClient } = require('../utils/graph-api');
+const { createGraphClient } = require('../utils/graph-api-adapter');
 const { listUsers } = require('../auth/token-manager');
 const { buildQueryParams } = require('../utils/odata-helpers');
 
@@ -183,14 +183,15 @@ async function searchEmailsHandler(params = {}) {
     
     logger.info(`Searching emails for user ${userId} with query: ${query}`);
     
-    const graphClient = new GraphApiClient(userId);
+    const graphClient = await createGraphClient(userId);
     
-    // Build query parameters
+    // Build query parameters - Microsoft Graph API doesn't support $search and $orderBy together
     const queryParams = buildQueryParams({
       select: requestParams.fields || config.email.defaultFields,
       top: limit,
       search: query,
-      orderBy: requestParams.orderBy || { receivedDateTime: 'desc' }
+      // Remove orderBy when using search - they can't be used together
+      // orderBy: requestParams.orderBy || { receivedDateTime: 'desc' }
     });
     
     // Perform email search
@@ -199,6 +200,48 @@ async function searchEmailsHandler(params = {}) {
     const emails = await graphClient.getPaginated(endpoint, queryParams, {
       maxPages: requestParams.maxPages || 1
     });
+    
+    // If results need to be sorted, do it client-side
+    if (requestParams.orderBy) {
+      // Default to sorting by receivedDateTime in descending order
+      const sortField = Object.keys(requestParams.orderBy)[0] || 'receivedDateTime';
+      const sortDirection = requestParams.orderBy[sortField] || 'desc';
+      
+      // Sort the emails array
+      emails.sort((a, b) => {
+        const valueA = a[sortField];
+        const valueB = b[sortField];
+        
+        // Handle undefined values
+        if (valueA === undefined && valueB === undefined) return 0;
+        if (valueA === undefined) return sortDirection === 'asc' ? -1 : 1;
+        if (valueB === undefined) return sortDirection === 'asc' ? 1 : -1;
+        
+        // Compare dates
+        if (valueA instanceof Date && valueB instanceof Date) {
+          return sortDirection === 'asc' 
+            ? valueA.getTime() - valueB.getTime()
+            : valueB.getTime() - valueA.getTime();
+        }
+        
+        // Compare strings
+        if (typeof valueA === 'string' && typeof valueB === 'string') {
+          return sortDirection === 'asc'
+            ? valueA.localeCompare(valueB)
+            : valueB.localeCompare(valueA);
+        }
+        
+        // Compare numbers
+        return sortDirection === 'asc' ? valueA - valueB : valueB - valueA;
+      });
+    } else {
+      // Default sort by receivedDateTime desc if no specific order requested
+      emails.sort((a, b) => {
+        const dateA = new Date(a.receivedDateTime || 0);
+        const dateB = new Date(b.receivedDateTime || 0);
+        return dateB.getTime() - dateA.getTime();
+      });
+    }
     
     // Group results by folder for better organization
     const folderGroups = {};
@@ -279,7 +322,7 @@ function formatEmailResult(email) {
 
 /**
  * Populate folder names for search results
- * @param {GraphApiClient} graphClient - Graph API client
+ * @param {Object} graphClient - Graph API client instance
  * @param {Object} folderGroups - Folder groups to populate
  * @returns {Promise<void>}
  */

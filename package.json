@@ -7,7 +7,7 @@
     "start": "node index.js",
     "dev": "nodemon index.js",
     "test": "jest",
-    "auth-server": "node outlook-auth-server.js"
+    "test-auth": "node auth/test-auth-service.js"
   },
   "keywords": [
     "claude",
@@ -18,6 +18,8 @@
   "author": "Enhanced MCP Team",
   "license": "MIT",
   "dependencies": {
+    "@azure/msal-node": "^2.16.2",
+    "@microsoft/microsoft-graph-client": "^3.0.7",
     "@modelcontextprotocol/sdk": "^1.9.0",
     "axios": "^1.6.0",
     "body-parser": "^1.20.2",

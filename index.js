@@ -21,13 +21,15 @@ const {
   deleteAttachmentHandler
 } = require('./email');
 
-// Import handlers from auth module
-const { 
-  authenticateHandler, 
+// Import authentication handlers
+const {
+  authenticateHandler,
   checkAuthStatusHandler,
   revokeAuthenticationHandler,
+  refreshTokenHandler,
+  tokenInfoHandler,
   listAuthenticatedUsersHandler
-} = require('./auth');
+} = require('./auth/index');
 
 // Import handlers from calendar module
 const {
@@ -522,30 +524,14 @@ server.tool(
       const responseData = JSON.parse(result.content[0].text);
       
       // Add additional fields to help Claude understand auth status better
-      if (responseData.isAuthenticating === false && responseData.instruction && responseData.instruction.includes("You are authenticated")) {
-        // User is already authenticated
+      if (responseData.status === 'authenticated') {
+        // User is authenticated
         responseData.authenticated = true;
         responseData.auth_needed = false;
-        responseData.message = "Authentication already complete. No need to authenticate again.";
-        responseData.token_expiry = responseData.tokenExpiresAt || null;
         
-        // Calculate if token will expire soon (within 5 minutes)
-        if (responseData.tokenExpiresAt) {
-          const expiryDate = new Date(responseData.tokenExpiresAt);
-          const now = new Date();
-          const timeUntilExpiry = expiryDate - now;
-          const fiveMinutes = 5 * 60 * 1000;
-          
-          if (timeUntilExpiry < fiveMinutes && timeUntilExpiry > 0) {
-            responseData.auth_needed = true;
-            responseData.message = "Authentication token will expire soon. Consider re-authenticating.";
-          }
+        if (!responseData.message || responseData.message.includes("Authentication required")) {
+          responseData.message = `You are authenticated as ${responseData.user?.displayName || responseData.user?.email || 'an authenticated user'}.`;
         }
-      } else if (responseData.authenticated) {
-        // Handle the case where 'authenticated' is already set to true
-        responseData.auth_needed = false;
-        responseData.message = "Authentication already complete. No need to authenticate again.";
-        responseData.token_expiry = responseData.tokenExpiresAt || null;
         
         // Calculate if token will expire soon (within 5 minutes)
         if (responseData.tokenExpiresAt) {

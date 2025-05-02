@@ -1,12 +1,12 @@
 // rules/delete.js
-const { GraphApiClient } = require('../utils/graph-api');
+const { createGraphClient } = require('../utils/graph-api-adapter');
 
 async function deleteRuleHandler(params = {}) {
   const { userId = 'default', ruleId } = params;
   if (!ruleId) return formatMcpResponse({ status: 'error', message: 'Rule ID required' });
 
   try {
-    const graphClient = new GraphApiClient(userId);
+    const graphClient = await createGraphClient(userId);
     await graphClient.delete(`/me/mailFolders/inbox/messageRules/${ruleId}`);
     return formatMcpResponse({ status: 'success', message: 'Rule deleted', ruleId });
   } catch (error) {

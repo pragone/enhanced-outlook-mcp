@@ -1,6 +1,6 @@
 const config = require('../config');
 const logger = require('../utils/logger');
-const { GraphApiClient } = require('../utils/graph-api');
+const { createGraphClient } = require('../utils/graph-api-adapter');
 const { listUsers } = require('../auth/token-manager');
 
 /**
@@ -66,7 +66,7 @@ async function getAttachmentHandler(params = {}) {
     
     logger.info(`Getting attachment ${attachmentId} from email ${emailId} for user ${userId}`);
     
-    const graphClient = new GraphApiClient(userId);
+    const graphClient = await createGraphClient(userId);
     
     // Get attachment
     const attachment = await graphClient.get(`/me/messages/${emailId}/attachments/${attachmentId}`);
@@ -184,7 +184,7 @@ async function listAttachmentsHandler(params = {}) {
     
     logger.info(`Listing attachments for email ${emailId} for user ${userId}`);
     
-    const graphClient = new GraphApiClient(userId);
+    const graphClient = await createGraphClient(userId);
     
     // Get attachments
     const response = await graphClient.get(`/me/messages/${emailId}/attachments`);
@@ -312,7 +312,7 @@ async function addAttachmentHandler(params = {}) {
     
     logger.info(`Adding attachment to email ${emailId} for user ${userId}`);
     
-    const graphClient = new GraphApiClient(userId);
+    const graphClient = await createGraphClient(userId);
     
     // Prepare attachment data
     const attachmentData = {
@@ -423,7 +423,7 @@ async function deleteAttachmentHandler(params = {}) {
     
     logger.info(`Deleting attachment ${attachmentId} from email ${emailId} for user ${userId}`);
     
-    const graphClient = new GraphApiClient(userId);
+    const graphClient = await createGraphClient(userId);
     
     // Delete attachment
     await graphClient.delete(`/me/messages/${emailId}/attachments/${attachmentId}`);
@@ -505,7 +505,7 @@ async function getAttachmentsHandler(params = {}) {
     
     logger.info(`Getting attachments for message ${messageId} for user ${userId}`);
     
-    const graphClient = new GraphApiClient(userId);
+    const graphClient = await createGraphClient(userId);
     
     // Get attachments
     const response = await graphClient.get(`/me/messages/${messageId}/attachments`);

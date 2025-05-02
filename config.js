@@ -8,7 +8,6 @@ const config = {
     name: 'Enhanced Outlook MCP Server',
     version: '1.0.0',
     port: process.env.PORT || 3000,
-    authPort: process.env.AUTH_PORT || 3333,
     logLevel: process.env.LOG_LEVEL || 'info',
     tokenStoragePath: process.env.TOKEN_STORAGE_PATH || path.join(os.homedir(), '.enhanced-outlook-mcp-tokens.json')
   },
@@ -17,7 +16,7 @@ const config = {
   microsoft: {
     clientId: process.env.MS_CLIENT_ID,
     authority: process.env.MS_AUTHORITY || 'https://login.microsoftonline.com/common',
-    redirectUri: process.env.MS_REDIRECT_URI || 'http://localhost:3333/auth/callback',
+    redirectUri: process.env.MS_REDIRECT_URI || 'http://localhost:3000/auth/callback',
     scopes: process.env.MS_SCOPES ? process.env.MS_SCOPES.split(',') : [
       'openid',
       'profile',

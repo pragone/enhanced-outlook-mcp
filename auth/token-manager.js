@@ -79,7 +79,7 @@ async function getToken(userId) {
   // Check which module is calling this function and set appropriate required scopes
   if (callerStack.includes('/calendar/')) {
     requiredScopes.push('Calendars.ReadWrite');
-  } else if (callerStack.includes('/mail/')) {
+  } else if (callerStack.includes('/mail/') || callerStack.includes('/email/')) {
     requiredScopes.push('Mail.Read');
   }
   

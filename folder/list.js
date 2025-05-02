@@ -1,6 +1,6 @@
 const config = require('../config');
 const logger = require('../utils/logger');
-const { GraphApiClient } = require('../utils/graph-api');
+const { createGraphClient } = require('../utils/graph-api-adapter');
 const { buildQueryParams } = require('../utils/odata-helpers');
 const { listUsers } = require('../auth/token-manager');
 
@@ -42,7 +42,7 @@ async function listFoldersHandler(params = {}) {
   try {
     logger.info(`Listing mail folders for user ${userId}`);
     
-    const graphClient = new GraphApiClient(userId);
+    const graphClient = await createGraphClient(userId);
     
     // Determine the endpoint based on whether a parent folder is specified
     let endpoint;
@@ -160,7 +160,7 @@ async function getFolderHandler(params = {}) {
   try {
     logger.info(`Getting folder ${folderId} for user ${userId}`);
     
-    const graphClient = new GraphApiClient(userId);
+    const graphClient = await createGraphClient(userId);
     
     // Determine the endpoint based on whether it's a well-known folder
     let endpoint;

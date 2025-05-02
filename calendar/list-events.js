@@ -1,6 +1,6 @@
 const config = require('../config');
 const logger = require('../utils/logger');
-const { GraphApiClient } = require('../utils/graph-api');
+const { createGraphClient } = require('../utils/graph-api-adapter');
 const { listUsers } = require('../auth/token-manager');
 const { buildQueryParams } = require('../utils/odata-helpers');
 const { normalizeParameters } = require('../utils/parameter-helpers');
@@ -67,7 +67,7 @@ async function listEventsHandler(params = {}) {
   try {
     logger.info(`Listing calendar events for user ${userId} from ${startDateTime} to ${endDateTime}`);
     
-    const graphClient = new GraphApiClient(userId);
+    const graphClient = await createGraphClient(userId);
     
     // Determine the endpoint based on calendar ID
     let endpoint;
@@ -175,7 +175,7 @@ async function getEventHandler(params = {}) {
   try {
     logger.info(`Getting calendar event ${eventId} for user ${userId}`);
     
-    const graphClient = new GraphApiClient(userId);
+    const graphClient = await createGraphClient(userId);
     
     // Get the event
     const event = await graphClient.get(`/me/events/${eventId}`);
@@ -256,7 +256,7 @@ async function listCalendarsHandler(params = {}) {
   try {
     logger.info(`Listing calendars for user ${userId}`);
     
-    const graphClient = new GraphApiClient(userId);
+    const graphClient = await createGraphClient(userId);
     
     // Get all calendars
     const response = await graphClient.get('/me/calendars');

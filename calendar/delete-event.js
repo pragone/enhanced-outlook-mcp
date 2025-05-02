@@ -1,6 +1,6 @@
 const config = require('../config');
 const logger = require('../utils/logger');
-const { GraphApiClient } = require('../utils/graph-api');
+const { createGraphClient } = require('../utils/graph-api-adapter');
 const { listUsers } = require('../auth/token-manager');
 
 /**
@@ -38,7 +38,7 @@ async function deleteEventHandler(params = {}) {
   try {
     logger.info(`Deleting calendar event ${eventId} for user ${userId}`);
     
-    const graphClient = new GraphApiClient(userId);
+    const graphClient = await createGraphClient(userId);
     
     // Delete the event
     await graphClient.delete(`/me/events/${eventId}`);
@@ -93,7 +93,7 @@ async function cancelEventHandler(params = {}) {
   try {
     logger.info(`Cancelling calendar event ${eventId} for user ${userId}`);
     
-    const graphClient = new GraphApiClient(userId);
+    const graphClient = await createGraphClient(userId);
     
     // Create cancellation data
     const cancellationData = {
@@ -133,7 +133,7 @@ async function findMeetingTimesHandler(params = {}) {
   try {
     logger.info(`Finding available meeting times for user ${userId}`);
     
-    const graphClient = new GraphApiClient(userId);
+    const graphClient = await createGraphClient(userId);
     
     // Build meeting time suggestions request
     const findTimesRequest = {

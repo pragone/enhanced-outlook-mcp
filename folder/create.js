@@ -1,5 +1,5 @@
 // folder/create.js
-const { GraphApiClient } = require('../utils/graph-api');
+const { createGraphClient } = require('../utils/graph-api-adapter');
 
 async function createFolderHandler(params = {}) {
   const { userId = 'default', name } = params;
@@ -16,7 +16,7 @@ async function createFolderHandler(params = {}) {
   }
 
   try {
-    const graphClient = new GraphApiClient(userId);
+    const graphClient = await createGraphClient(userId);
     const folder = await graphClient.post('/me/mailFolders', { displayName: name });
     return {
       content: [{

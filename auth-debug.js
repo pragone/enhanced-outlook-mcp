@@ -1,4 +1,4 @@
-const { authenticateHandler, checkAuthStatusHandler } = require('./auth/tools');
+const { authenticateHandler, checkAuthStatusHandler } = require('./auth/index');
 const logger = require('./utils/logger');
 const config = require('./config');
 
@@ -8,7 +8,6 @@ logger.level = 'debug';
 async function main() {
   console.log('=== Authentication Debug ===');
   console.log('Microsoft client ID:', config.microsoft.clientId);
-  console.log('Auth server port:', config.server.authPort);
   console.log('Redirect URI:', config.microsoft.redirectUri);
   console.log('Token storage path:', config.server.tokenStoragePath);
   console.log('Scopes:', config.microsoft.scopes);

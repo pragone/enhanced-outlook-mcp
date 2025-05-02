@@ -1,6 +1,6 @@
 const config = require('../config');
 const logger = require('../utils/logger');
-const { GraphApiClient } = require('../utils/graph-api');
+const { createGraphClient } = require('../utils/graph-api-adapter');
 const { listUsers } = require('../auth/token-manager');
 
 /**
@@ -80,7 +80,7 @@ async function sendEmailHandler(params = {}) {
     
     logger.info(`Sending email for user ${userId} with subject: ${subject}`);
     
-    const graphClient = new GraphApiClient(userId);
+    const graphClient = await createGraphClient(userId);
     
     // Prepare recipients
     const toRecipients = formatRecipients(to);
@@ -167,7 +167,7 @@ async function createDraftHandler(params = {}) {
   try {
     logger.info(`Creating email draft for user ${userId}`);
     
-    const graphClient = new GraphApiClient(userId);
+    const graphClient = await createGraphClient(userId);
     
     // Prepare recipients
     const toRecipients = formatRecipients(params.to);
@@ -254,7 +254,7 @@ async function replyEmailHandler(params = {}) {
   try {
     logger.info(`Replying to email ${emailId} for user ${userId}`);
     
-    const graphClient = new GraphApiClient(userId);
+    const graphClient = await createGraphClient(userId);
     
     // Determine if it's a reply or reply all
     const endpoint = params.replyAll 
@@ -311,7 +311,7 @@ async function forwardEmailHandler(params = {}) {
   try {
     logger.info(`Forwarding email ${emailId} for user ${userId}`);
     
-    const graphClient = new GraphApiClient(userId);
+    const graphClient = await createGraphClient(userId);
     
     // Format recipients
     const toRecipients = formatRecipients(params.to);
