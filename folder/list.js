@@ -1,8 +1,10 @@
 const config = require('../config');
 const logger = require('../utils/logger');
-const { createGraphClient } = require('../utils/graph-api-adapter');
+const { folder: folderApi, email: emailApi } = require('../utils/graph-api-adapter');
 const { buildQueryParams } = require('../utils/odata-helpers');
 const { listUsers } = require('../auth/token-manager');
+const auth = require('../auth/index');
+const { normalizeParameters } = require('../utils/parameter-helpers');
 
 /**
  * List mail folders
@@ -42,26 +44,11 @@ async function listFoldersHandler(params = {}) {
   try {
     logger.info(`Listing mail folders for user ${userId}`);
     
-    const graphClient = await createGraphClient(userId);
-    
-    // Determine the endpoint based on whether a parent folder is specified
-    let endpoint;
-    if (parentFolderId) {
-      endpoint = `/me/mailFolders/${parentFolderId}/childFolders`;
-    } else {
-      endpoint = '/me/mailFolders';
-    }
-    
-    // Build query parameters
-    const queryParams = buildQueryParams({
-      top: params.limit || 100,
-      select: ['id', 'displayName', 'parentFolderId', 'childFolderCount', 'totalItemCount', 'unreadItemCount'],
-      filter: params.filter,
-      orderBy: params.orderBy || { displayName: 'asc' }
+    // Get folders using folderApi to ensure proper authentication handling
+    const response = await folderApi.listFolders(userId, {
+      parentFolderId: parentFolderId,
+      top: params.limit || 100
     });
-    
-    // Get folders
-    const response = await graphClient.get(endpoint, queryParams);
     
     if (!response || !response.value) {
       return {
@@ -160,20 +147,13 @@ async function getFolderHandler(params = {}) {
   try {
     logger.info(`Getting folder ${folderId} for user ${userId}`);
     
-    const graphClient = await createGraphClient(userId);
+    // Normalize well-known folder IDs if needed
+    const normalizedFolderId = ['inbox', 'drafts', 'sentitems', 'deleteditems'].includes(folderId.toLowerCase())
+      ? folderId.toLowerCase()
+      : folderId;
     
-    // Determine the endpoint based on whether it's a well-known folder
-    let endpoint;
-    if (['inbox', 'drafts', 'sentitems', 'deleteditems'].includes(folderId.toLowerCase())) {
-      endpoint = `/me/mailFolders/${folderId.toLowerCase()}`;
-    } else {
-      endpoint = `/me/mailFolders/${folderId}`;
-    }
-    
-    // Get folder details with child folders and recent messages
-    const folder = await graphClient.get(endpoint, {
-      $expand: 'childFolders,messages($top=5;$orderby=receivedDateTime desc;$select=id,subject,from,receivedDateTime,isRead)'
-    });
+    // Use folderApi to get the folder details
+    const folder = await folderApi.getFolder(userId, normalizedFolderId);
     
     if (!folder) {
       return {
@@ -187,26 +167,41 @@ async function getFolderHandler(params = {}) {
       };
     }
     
-    // Format child folders
-    const childFolders = folder.childFolders ? folder.childFolders.map(child => ({
-      id: child.id,
-      name: child.displayName,
-      childFolderCount: child.childFolderCount,
-      itemCount: child.totalItemCount,
-      unreadItemCount: child.unreadItemCount
-    })) : [];
+    // Get child folders
+    const childFoldersResponse = await folderApi.listFolders(userId, {
+      parentFolderId: normalizedFolderId
+    });
     
-    // Format recent messages
-    const recentMessages = folder.messages ? folder.messages.map(message => ({
-      id: message.id,
-      subject: message.subject || '(No Subject)',
-      sender: message.from ? {
-        name: message.from.emailAddress.name,
-        email: message.from.emailAddress.address
-      } : null,
-      receivedDateTime: message.receivedDateTime,
-      isRead: message.isRead
-    })) : [];
+    const childFolders = childFoldersResponse?.value 
+      ? childFoldersResponse.value.map(child => ({
+          id: child.id,
+          name: child.displayName,
+          childFolderCount: child.childFolderCount,
+          itemCount: child.totalItemCount,
+          unreadItemCount: child.unreadItemCount
+        }))
+      : [];
+    
+    // Get recent messages
+    const recentMessagesResponse = await emailApi.listMessages(userId, {
+      folderId: normalizedFolderId,
+      top: 5,
+      orderBy: { receivedDateTime: 'desc' },
+      select: ['id', 'subject', 'from', 'receivedDateTime', 'isRead']
+    });
+    
+    const recentMessages = recentMessagesResponse?.value
+      ? recentMessagesResponse.value.map(message => ({
+          id: message.id,
+          subject: message.subject || '(No Subject)',
+          sender: message.from ? {
+            name: message.from.emailAddress.name,
+            email: message.from.emailAddress.address
+          } : null,
+          receivedDateTime: message.receivedDateTime,
+          isRead: message.isRead
+        }))
+      : [];
     
     // Build folder info response
     const folderInfo = {

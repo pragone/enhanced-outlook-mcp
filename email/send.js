@@ -1,7 +1,9 @@
 const config = require('../config');
 const logger = require('../utils/logger');
-const { createGraphClient } = require('../utils/graph-api-adapter');
+const { email: emailApi } = require('../utils/graph-api-adapter');
 const { listUsers } = require('../auth/token-manager');
+const { normalizeParameters } = require('../utils/parameter-helpers');
+const auth = require('../auth/index');
 
 /**
  * Send a new email
@@ -80,8 +82,6 @@ async function sendEmailHandler(params = {}) {
     
     logger.info(`Sending email for user ${userId} with subject: ${subject}`);
     
-    const graphClient = await createGraphClient(userId);
-    
     // Prepare recipients
     const toRecipients = formatRecipients(to);
     const ccRecipients = formatRecipients(cc);
@@ -104,9 +104,9 @@ async function sendEmailHandler(params = {}) {
       message.importance = params.importance.toUpperCase();
     }
     
-    // Send email using sendMail endpoint
-    await graphClient.post('/me/sendMail', {
-      message,
+    // Send email using emailApi.sendMessage
+    // This will correctly handle authentication and token reuse
+    await emailApi.sendMessage(userId, message, {
       saveToSentItems: params.saveToSentItems !== false
     });
     
@@ -167,8 +167,6 @@ async function createDraftHandler(params = {}) {
   try {
     logger.info(`Creating email draft for user ${userId}`);
     
-    const graphClient = await createGraphClient(userId);
-    
     // Prepare recipients
     const toRecipients = formatRecipients(params.to);
     const ccRecipients = formatRecipients(params.cc);
@@ -192,15 +190,15 @@ async function createDraftHandler(params = {}) {
       message.importance = params.importance.toUpperCase();
     }
     
-    // Create draft by saving to drafts folder
-    const draftEmail = await graphClient.post('/me/messages', message);
+    // Create draft using emailApi.createDraft
+    // This will correctly handle authentication and token reuse
+    const draftEmail = await emailApi.createDraft(userId, message);
     
     return formatMcpResponse({
       status: 'success',
       message: 'Draft email created successfully',
-      draftId: draftEmail.id,
-      subject: params.subject,
-      webLink: draftEmail.webLink
+      emailId: draftEmail.id,
+      subject: draftEmail.subject
     });
   } catch (error) {
     logger.error(`Error creating draft email: ${error.message}`);
@@ -235,41 +233,51 @@ async function replyEmailHandler(params = {}) {
       });
     }
   }
-  const emailId = params.emailId;
+  const messageId = params.messageId || params.emailId;
   
-  if (!emailId) {
+  if (!messageId) {
     return formatMcpResponse({
       status: 'error',
-      message: 'Email ID is required'
+      message: 'Message ID is required'
     });
   }
   
-  if (!params.body) {
+  if (!params.message && !params.body) {
     return formatMcpResponse({
       status: 'error',
-      message: 'Reply body is required'
+      message: 'Reply message or body is required'
     });
   }
   
   try {
-    logger.info(`Replying to email ${emailId} for user ${userId}`);
+    logger.info(`Replying to email ${messageId} for user ${userId}`);
     
-    const graphClient = await createGraphClient(userId);
+    // Prepare the reply message or comment
+    let replyMessage = null;
+    let comment = null;
+    
+    if (params.message) {
+      // Use full message object if provided
+      replyMessage = params.message;
+    } else {
+      // Or just use the comment parameter
+      comment = params.body;
+    }
     
     // Determine if it's a reply or reply all
-    const endpoint = params.replyAll 
-      ? `/me/messages/${emailId}/replyAll`
-      : `/me/messages/${emailId}/reply`;
+    const replyAll = params.replyAll === true;
     
-    // Send reply
-    await graphClient.post(endpoint, {
-      comment: params.body
+    // Send the reply
+    // Use emailApi.replyToMessage which will handle auth properly
+    await emailApi.replyToMessage(userId, messageId, replyMessage, {
+      replyAll,
+      comment
     });
     
     return formatMcpResponse({
       status: 'success',
-      message: `${params.replyAll ? 'Reply all' : 'Reply'} sent successfully`,
-      emailId
+      message: `Email ${replyAll ? 'replied all' : 'replied'} successfully`,
+      messageId: messageId
     });
   } catch (error) {
     logger.error(`Error replying to email: ${error.message}`);
@@ -290,42 +298,53 @@ async function forwardEmailHandler(params = {}) {
   let userId = params.userId;
   if (!userId) {
     const users = await listUsers();
-    userId = users.length === 1 ? users[0] : 'default';
+    if (users.length === 0) {
+      return formatMcpResponse({
+        status: 'error',
+        message: 'No authenticated users found. Please authenticate first.'
+      });
+    }
+    userId = users.length === 1 ? users[0] : params.userId;
+    if (!userId) {
+      return formatMcpResponse({
+        status: 'error',
+        message: 'Multiple users found. Please specify userId parameter.'
+      });
+    }
   }
-  const emailId = params.emailId;
+  const messageId = params.messageId || params.emailId;
+  const to = params.to;
   
-  if (!emailId) {
+  if (!messageId) {
     return formatMcpResponse({
       status: 'error',
-      message: 'Email ID is required'
+      message: 'Message ID is required'
     });
   }
   
-  if (!params.to) {
+  if (!to) {
     return formatMcpResponse({
       status: 'error',
-      message: 'At least one recipient is required'
+      message: 'At least one recipient (to) is required'
     });
   }
   
   try {
-    logger.info(`Forwarding email ${emailId} for user ${userId}`);
-    
-    const graphClient = await createGraphClient(userId);
+    logger.info(`Forwarding email ${messageId} for user ${userId}`);
     
     // Format recipients
-    const toRecipients = formatRecipients(params.to);
+    const toRecipients = formatRecipients(to);
     
     // Forward the email
-    await graphClient.post(`/me/messages/${emailId}/forward`, {
-      comment: params.comment || '',
-      toRecipients
+    // Use emailApi.forwardMessage which will handle auth properly
+    await emailApi.forwardMessage(userId, messageId, toRecipients, {
+      comment: params.comment || params.body
     });
     
     return formatMcpResponse({
       status: 'success',
       message: 'Email forwarded successfully',
-      emailId,
+      messageId: messageId,
       recipientCount: toRecipients.length
     });
   } catch (error) {

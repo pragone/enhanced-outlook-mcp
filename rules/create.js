@@ -1,7 +1,8 @@
 const config = require('../config');
 const logger = require('../utils/logger');
-const { createGraphClient } = require('../utils/graph-api-adapter');
+const { rules: rulesApi } = require('../utils/graph-api-adapter');
 const { listUsers } = require('../auth/token-manager');
+const auth = require('../auth/index');
 
 /**
  * Create a new mail rule
@@ -78,8 +79,6 @@ async function createRuleHandler(params = {}) {
   try {
     logger.info(`Creating mail rule "${params.displayName}" for user ${userId}`);
     
-    const graphClient = await createGraphClient(userId);
-    
     // Format conditions object
     const conditions = formatRuleConditions(params.conditions);
     
@@ -95,8 +94,8 @@ async function createRuleHandler(params = {}) {
       actions
     };
     
-    // Create the rule
-    const rule = await graphClient.post('/me/mailFolders/inbox/messageRules', ruleData);
+    // Create the rule using rulesApi
+    const rule = await rulesApi.createRule(userId, ruleData);
     
     return {
       content: [{
@@ -174,8 +173,6 @@ async function updateRuleHandler(params = {}) {
   try {
     logger.info(`Updating mail rule ${ruleId} for user ${userId}`);
     
-    const graphClient = await createGraphClient(userId);
-    
     // Prepare update data
     const updateData = {};
     
@@ -199,8 +196,8 @@ async function updateRuleHandler(params = {}) {
       updateData.actions = formatRuleActions(params.actions);
     }
     
-    // Update the rule
-    await graphClient.patch(`/me/mailFolders/inbox/messageRules/${ruleId}`, updateData);
+    // Update the rule using rulesApi
+    await rulesApi.updateRule(userId, ruleId, updateData);
     
     return {
       content: [{
@@ -221,86 +218,6 @@ async function updateRuleHandler(params = {}) {
         text: JSON.stringify({
           status: 'error',
           message: `Failed to update mail rule: ${error.message}`
-        })
-      }]
-    };
-  }
-}
-
-/**
- * Delete a mail rule
- * @param {Object} params - Tool parameters
- * @returns {Promise<Object>} - Deletion result
- */
-async function deleteRuleHandler(params = {}) {
-  let userId = params.userId;
-  if (!userId) {
-    const users = await listUsers();
-    if (users.length === 0) {
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            status: 'error',
-            message: 'No authenticated users found. Please authenticate first.'
-          })
-        }]
-      };
-    }
-    userId = users.length === 1 ? users[0] : params.userId;
-    if (!userId) {
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            status: 'error',
-            message: 'Multiple users found. Please specify userId parameter.'
-          })
-        }]
-      };
-    }
-  }
-  const ruleId = params.ruleId;
-  
-  if (!ruleId) {
-    return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          status: 'error',
-          message: 'Rule ID is required'
-        })
-      }]
-    };
-  }
-  
-  try {
-    logger.info(`Deleting mail rule ${ruleId} for user ${userId}`);
-    
-    const graphClient = await createGraphClient(userId);
-    
-    // Delete the rule
-    await graphClient.delete(`/me/mailFolders/inbox/messageRules/${ruleId}`);
-    
-    return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          status: 'success',
-          message: 'Rule deleted successfully',
-          ruleId
-        })
-      }]
-    };
-  } catch (error) {
-    logger.error(`Error deleting mail rule: ${error.message}`);
-    
-    return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          status: 'error',
-          message: `Failed to delete mail rule: ${error.message}`
         })
       }]
     };
@@ -563,6 +480,5 @@ function formatEmailAddresses(addresses) {
 
 module.exports = {
   createRuleHandler,
-  updateRuleHandler,
-  deleteRuleHandler
+  updateRuleHandler
 };

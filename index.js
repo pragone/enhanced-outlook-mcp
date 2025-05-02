@@ -631,20 +631,20 @@ server.tool(
 // Add some calendar tools
 server.tool(
   "list_events",
-  'List calendar events within a date range. Use to view upcoming calendar events. Call authenticate first, then list_calendars if you need to work with a specific calendar. Results can be used with get_event to view event details.',
+  'List calendar events within a date range. Use to view upcoming calendar events. Call authenticate first. For non-default calendars, you can specify either a calendar ID or calendar name in the calendarId parameter. Results can be used with get_event to view event details.',
   {
     userId: z.string().optional().describe('User identifier (optional, defaults to "default")'),
     startDateTime: z.string().optional().describe('Start date and time in ISO format (e.g., "2023-11-01T00:00:00Z")'),
     endDateTime: z.string().optional().describe('End date and time in ISO format (e.g., "2023-11-30T23:59:59Z")'),
     limit: z.number().optional().describe('Maximum number of events to return'),
-    calendarId: z.string().optional().describe('Specific calendar ID (obtain from list_calendars first). Required when working with non-default calendars.')
+    calendarId: z.string().optional().describe('Calendar ID or calendar name (e.g., "Family"). Use "primary" for default calendar.')
   },
   withErrorHandling(listEventsHandler)
 );
 
 server.tool(
   "create_event",
-  'Create a new calendar event. Use to schedule a new meeting or appointment. Call check_auth_status first to determine if authentication is needed, then list_calendars if you need to work with a specific calendar. For events with attendees, consider using find_meeting_times first to identify suitable time slots. Never add attendee emails unless the user has explicitly provided them. Do NOT infer or hallucinate attendees.',
+  'Create a new calendar event. Use to schedule a new meeting or appointment. Call authenticate first. For non-default calendars, you can specify either a calendar ID or calendar name in the calendarId parameter. For events with attendees, consider using find_meeting_times first to identify suitable time slots. Never add attendee emails unless the user has explicitly provided them. Do NOT infer or hallucinate attendees.',
   {
     userId: z.string().optional().describe('User identifier (optional, defaults to "default")'),
     subject: z.string().describe('Event subject/title'),
@@ -659,7 +659,7 @@ server.tool(
       type: z.enum(['required', 'optional']).optional()
     })).optional().describe('List of attendees with their email addresses'),
     isOnlineMeeting: z.boolean().optional().describe('Whether this is an online meeting'),
-    calendarId: z.string().optional().describe('Specific calendar ID (obtain from list_calendars first). Required when working with non-default calendars.')
+    calendarId: z.string().optional().describe('Calendar ID or calendar name (e.g., "Family Room"). Use "primary" for default calendar.')
   },
   withErrorHandling(createEventHandler)
 );
@@ -783,10 +783,11 @@ server.tool(
 // Add missing calendar tools
 server.tool(
   "get_event",
-  'Get details of a specific calendar event. Use to retrieve detailed information about a calendar event. Call check_auth_status first to determine if authentication is needed, then list_events to get event IDs.',
+  'Get details of a specific calendar event. Use to retrieve detailed information about a calendar event. Call authenticate first, then list_events to get event IDs. You can optionally specify a calendar ID or name in the calendarId parameter.',
   {
     userId: z.string().optional().describe('User identifier (optional, defaults to "default")'),
-    eventId: z.string().describe('ID of the calendar event')
+    eventId: z.string().describe('ID of the calendar event'),
+    calendarId: z.string().optional().describe('Calendar ID or calendar name. If not provided, searches across all calendars.')
   },
   withErrorHandling(getEventHandler)
 );

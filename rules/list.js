@@ -1,7 +1,8 @@
 const config = require('../config');
 const logger = require('../utils/logger');
-const { createGraphClient } = require('../utils/graph-api-adapter');
+const { rules: rulesApi } = require('../utils/graph-api-adapter');
 const { listUsers } = require('../auth/token-manager');
+const auth = require('../auth/index');
 
 /**
  * List mail rules
@@ -40,10 +41,8 @@ async function listRulesHandler(params = {}) {
   try {
     logger.info(`Listing mail rules for user ${userId}`);
     
-    const graphClient = await createGraphClient(userId);
-    
-    // Get mailbox rules
-    const response = await graphClient.get('/me/mailFolders/inbox/messageRules');
+    // Use rulesApi instead of direct Graph API calls
+    const response = await rulesApi.listRules(userId);
     
     if (!response || !response.value) {
       return {
@@ -135,10 +134,8 @@ async function getRuleHandler(params = {}) {
   try {
     logger.info(`Getting mail rule ${ruleId} for user ${userId}`);
     
-    const graphClient = await createGraphClient(userId);
-    
-    // Get specific rule
-    const rule = await graphClient.get(`/me/mailFolders/inbox/messageRules/${ruleId}`);
+    // Use rulesApi to get the rule details
+    const rule = await rulesApi.getRule(userId, ruleId);
     
     if (!rule) {
       return {

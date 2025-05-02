@@ -1,7 +1,9 @@
 const config = require('../config');
 const logger = require('../utils/logger');
-const { createGraphClient } = require('../utils/graph-api-adapter');
+const { calendar: calendarApi } = require('../utils/graph-api-adapter');
 const { listUsers } = require('../auth/token-manager');
+const { normalizeParameters } = require('../utils/parameter-helpers');
+const auth = require('../auth/index');
 
 /**
  * Update an existing calendar event
@@ -37,8 +39,6 @@ async function updateEventHandler(params = {}) {
   
   try {
     logger.info(`Updating calendar event ${eventId} for user ${userId}`);
-    
-    const graphClient = await createGraphClient(userId);
     
     // Prepare update data
     const updateData = {};
@@ -100,8 +100,9 @@ async function updateEventHandler(params = {}) {
       updateData.categories = params.categories;
     }
     
-    // Update the event
-    await graphClient.patch(`/me/events/${eventId}`, updateData);
+    // Update the event using calendarApi.updateEvent
+    // This will correctly handle authentication and token reuse
+    await calendarApi.updateEvent(userId, eventId, updateData);
     
     return formatMcpResponse({
       status: 'success',
@@ -226,7 +227,7 @@ function formatAttendees(attendees) {
 }
 
 /**
- * Respond to an event
+ * Respond to a calendar event invitation
  * @param {Object} params - Tool parameters
  * @returns {Promise<Object>} - Response result
  */
@@ -249,7 +250,6 @@ async function respondToEventHandler(params = {}) {
     }
   }
   const eventId = params.eventId;
-  const response = params.response;
   
   if (!eventId) {
     return formatMcpResponse({
@@ -258,6 +258,7 @@ async function respondToEventHandler(params = {}) {
     });
   }
   
+  const response = params.response;
   if (!response || !['accept', 'tentativelyAccept', 'decline'].includes(response)) {
     return formatMcpResponse({
       status: 'error',
@@ -266,17 +267,20 @@ async function respondToEventHandler(params = {}) {
   }
   
   try {
-    logger.info(`Responding to calendar event ${eventId} with "${response}" for user ${userId}`);
+    logger.info(`Responding to calendar event ${eventId} with '${response}' for user ${userId}`);
     
-    const graphClient = await createGraphClient(userId);
-    
-    // Create response data
+    // Prepare response data
     const responseData = {
-      comment: params.comment || ''
+      sendResponse: params.sendResponse !== false
     };
     
-    // Send the response
-    await graphClient.post(`/me/events/${eventId}/${response}`, responseData);
+    if (params.message) {
+      responseData.comment = params.message;
+    }
+    
+    // Respond to the event
+    // This will correctly handle authentication and token reuse
+    await calendarApi.respondToEvent(userId, eventId, response, responseData);
     
     return formatMcpResponse({
       status: 'success',

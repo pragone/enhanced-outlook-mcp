@@ -1,7 +1,8 @@
 const config = require('../config');
 const logger = require('../utils/logger');
-const { createGraphClient } = require('../utils/graph-api-adapter');
+const { email: emailApi, folder: folderApi } = require('../utils/graph-api-adapter');
 const { listUsers } = require('../auth/token-manager');
+const auth = require('../auth/index');
 const { buildQueryParams } = require('../utils/odata-helpers');
 
 /**
@@ -11,138 +12,21 @@ const { buildQueryParams } = require('../utils/odata-helpers');
  */
 async function searchEmailsHandler(params = {}) {
   try {
-    // Super detailed debugging
-    logger.info(`SEARCH EMAILS HANDLER START ------------------------------------`);
-    logger.info(`Raw params: ${JSON.stringify(params)}`);
+    // Debug logging
+    logger.info(`Search emails handler started`);
     
-    // CRITICAL FIX FOR CLAUDE DESKTOP:
-    // Check if this is a direct JSON-RPC request with the tool call format
-    if (global.__last_message?.method === 'tools/call' && 
-        global.__last_message?.params?.name === 'search_emails' &&
-        global.__last_message?.params?.arguments) {
-      
-      const directArgs = global.__last_message.params.arguments;
-      logger.info(`Found direct JSON-RPC arguments: ${JSON.stringify(directArgs)}`);
-      
-      // Use the arguments directly from the JSON-RPC request
-      if (directArgs.query) {
-        params = directArgs;
-        logger.info(`Using direct JSON-RPC arguments for search_emails`);
-      }
-    }
-    
-    // Check for raw message in params
-    const rawMessage = params.__raw_message;
-    if (rawMessage) {
-      logger.info(`Found raw message in params: ${JSON.stringify(rawMessage)}`);
-    }
-    
-    // Try all possible sources of parameters
-    let requestParams = {};
-    
-    // Order of preference for parameter sources:
-    // 1. Direct params
-    // 2. params.arguments
-    // 3. Raw message params.arguments
-    // 4. params.contextData (Claude Desktop might use this)
-    // 5. Global last message
-    
-    if (params.query) {
-      // Use direct params
-      requestParams = params;
-      logger.info(`Using direct params`);
-    } else if (params.arguments) {
-      // Use params.arguments
-      requestParams = typeof params.arguments === 'object' ? params.arguments : params;
-      logger.info(`Using params.arguments`);
-      
-      // Check if arguments is a string containing JSON
-      if (typeof params.arguments === 'string') {
-        try {
-          const parsedArgs = JSON.parse(params.arguments);
-          if (parsedArgs && typeof parsedArgs === 'object') {
-            requestParams = parsedArgs;
-            logger.info(`Parsed string arguments into object: ${JSON.stringify(parsedArgs)}`);
-          }
-        } catch (e) {
-          logger.info(`Arguments string is not valid JSON: ${params.arguments}`);
-        }
-      }
-    } else if (rawMessage?.params?.arguments) {
-      // Use raw message params
-      requestParams = rawMessage.params.arguments;
-      logger.info(`Using raw message params`);
-    } else if (params.contextData) {
-      // Try to use contextData (sometimes used by Claude Desktop)
-      requestParams = params.contextData;
-      logger.info(`Using params.contextData: ${JSON.stringify(params.contextData)}`);
-    } else if (params.signal) {
-      // Handle Claude Desktop format - try to extract parameters from request
-      logger.info(`Detected Claude Desktop format with signal property`);
-      
-      // Check if params has any properties that might be the search query
-      for (const key in params) {
-        // Skip known non-query properties
-        if (['signal', 'tool'].includes(key)) continue;
-        
-        const value = params[key];
-        if (typeof value === 'string' && value.length > 0) {
-          // This could be a search query
-          logger.info(`Found potential search query in property ${key}: ${value}`);
-          requestParams.query = value;
-          break;
-        }
-        
-        // Check if value is an object that might contain the query
-        if (typeof value === 'object' && value !== null) {
-          for (const subKey in value) {
-            if (['query', 'q', 'search'].includes(subKey)) {
-              logger.info(`Found search query in nested property ${key}.${subKey}: ${value[subKey]}`);
-              requestParams.query = value[subKey];
-              break;
-            }
-          }
-        }
-      }
-      
-      // Check for query saved in global context
-      if (!requestParams.query && global._claude_last_search_query) {
-        logger.info(`Using search query from global context: ${global._claude_last_search_query}`);
-        requestParams.query = global._claude_last_search_query;
-      }
-    } else if (global.__last_message?.params?.arguments) {
-      // Use global last message
-      requestParams = global.__last_message.params.arguments;
-      logger.info(`Using global last message params`);
-    } else {
-      // Last resort - check globals directly for previous search query
-      if (global._claude_last_search_query) {
-        requestParams.query = global._claude_last_search_query;
-        logger.info(`Using _claude_last_search_query from global context: ${global._claude_last_search_query}`);
-      }
-    }
-    
-    logger.info(`Request params extracted: ${JSON.stringify(requestParams)}`);
+    // Process parameters
+    const requestParams = params.arguments ? params.arguments : params;
     
     // Extract userId
     let userId = requestParams.userId;
-    logger.info(`Extracted userId: ${userId}`);
-    
-    // Extract query and ensure we have one
-    const query = requestParams.query || '';
-    logger.info(`Extracted query: ${query}`);
-    
-    // Store search query in global context for potential future use
-    if (query) {
-      global._claude_last_search_query = query;
-    }
     
     if (!userId) {
       const users = await listUsers();
       if (users.length === 0) {
         return {
           content: [{
-            type: "text", 
+            type: "text",
             text: JSON.stringify({
               status: 'error',
               message: 'No authenticated users found. Please authenticate first.'
@@ -157,12 +41,15 @@ async function searchEmailsHandler(params = {}) {
             type: "text",
             text: JSON.stringify({
               status: 'error',
-              message: 'Multiple users found. Please specify userId parameter to indicate which account to use.'
+              message: 'Multiple users found. Please specify userId parameter.'
             })
           }]
         };
       }
     }
+    
+    // Extract query
+    const query = requestParams.query || '';
     
     if (!query) {
       return {
@@ -170,72 +57,55 @@ async function searchEmailsHandler(params = {}) {
           type: "text",
           text: JSON.stringify({
             status: 'error',
-            message: 'query parameter is required'
+            message: 'Query parameter is required'
           })
         }]
       };
     }
     
+    // Calculate limit
     const limit = Math.min(
-      requestParams.limit || config.email.maxEmailsPerRequest, 
+      requestParams.limit || config.email.maxEmailsPerRequest,
       config.email.maxEmailsPerRequest
     );
     
     logger.info(`Searching emails for user ${userId} with query: ${query}`);
     
-    const graphClient = await createGraphClient(userId);
-    
-    // Build query parameters - Microsoft Graph API doesn't support $search and $orderBy together
+    // Build query parameters
     const queryParams = buildQueryParams({
       select: requestParams.fields || config.email.defaultFields,
       top: limit,
-      search: query,
-      // Remove orderBy when using search - they can't be used together
-      // orderBy: requestParams.orderBy || { receivedDateTime: 'desc' }
+      search: query
     });
     
-    // Perform email search
-    // Microsoft Graph allows searching across all folders with /me/messages endpoint
-    const endpoint = '/me/messages';
-    const emails = await graphClient.getPaginated(endpoint, queryParams, {
-      maxPages: requestParams.maxPages || 1
-    });
+    // Use emailApi to search messages
+    const emailsResponse = await emailApi.listMessages(userId, queryParams);
+    const emails = emailsResponse.value || [];
     
-    // If results need to be sorted, do it client-side
+    // Sort results if needed
     if (requestParams.orderBy) {
-      // Default to sorting by receivedDateTime in descending order
       const sortField = Object.keys(requestParams.orderBy)[0] || 'receivedDateTime';
       const sortDirection = requestParams.orderBy[sortField] || 'desc';
       
-      // Sort the emails array
       emails.sort((a, b) => {
         const valueA = a[sortField];
         const valueB = b[sortField];
         
-        // Handle undefined values
-        if (valueA === undefined && valueB === undefined) return 0;
-        if (valueA === undefined) return sortDirection === 'asc' ? -1 : 1;
-        if (valueB === undefined) return sortDirection === 'asc' ? 1 : -1;
-        
-        // Compare dates
+        // Compare based on type
         if (valueA instanceof Date && valueB instanceof Date) {
           return sortDirection === 'asc' 
             ? valueA.getTime() - valueB.getTime()
             : valueB.getTime() - valueA.getTime();
-        }
-        
-        // Compare strings
-        if (typeof valueA === 'string' && typeof valueB === 'string') {
+        } else if (typeof valueA === 'string' && typeof valueB === 'string') {
           return sortDirection === 'asc'
             ? valueA.localeCompare(valueB)
             : valueB.localeCompare(valueA);
+        } else {
+          return sortDirection === 'asc' ? valueA - valueB : valueB - valueA;
         }
-        
-        // Compare numbers
-        return sortDirection === 'asc' ? valueA - valueB : valueB - valueA;
       });
     } else {
-      // Default sort by receivedDateTime desc if no specific order requested
+      // Default sort by receivedDateTime desc
       emails.sort((a, b) => {
         const dateA = new Date(a.receivedDateTime || 0);
         const dateB = new Date(b.receivedDateTime || 0);
@@ -243,7 +113,7 @@ async function searchEmailsHandler(params = {}) {
       });
     }
     
-    // Group results by folder for better organization
+    // Group results by folder
     const folderGroups = {};
     for (const email of emails) {
       const parentFolderId = email.parentFolderId || 'unknown';
@@ -251,7 +121,7 @@ async function searchEmailsHandler(params = {}) {
       if (!folderGroups[parentFolderId]) {
         folderGroups[parentFolderId] = {
           folderId: parentFolderId,
-          folderName: 'Unknown', // We'll populate this later
+          folderName: 'Unknown',
           emails: []
         };
       }
@@ -259,10 +129,8 @@ async function searchEmailsHandler(params = {}) {
       folderGroups[parentFolderId].emails.push(formatEmailResult(email));
     }
     
-    // Fetch folder names if we have results
-    if (Object.keys(folderGroups).length > 0) {
-      await populateFolderNames(graphClient, folderGroups);
-    }
+    // Fetch folder names
+    await fetchFolderNames(userId, folderGroups);
     
     return {
       content: [{
@@ -321,12 +189,12 @@ function formatEmailResult(email) {
 }
 
 /**
- * Populate folder names for search results
- * @param {Object} graphClient - Graph API client instance
+ * Fetch folder names for search results
+ * @param {string} userId - User ID
  * @param {Object} folderGroups - Folder groups to populate
  * @returns {Promise<void>}
  */
-async function populateFolderNames(graphClient, folderGroups) {
+async function fetchFolderNames(userId, folderGroups) {
   const folderIds = Object.keys(folderGroups).filter(id => id !== 'unknown');
   
   if (folderIds.length === 0) {
@@ -334,54 +202,22 @@ async function populateFolderNames(graphClient, folderGroups) {
   }
   
   try {
-    // Get well-known folder names first
-    const wellKnownFolders = await graphClient.get('/me/mailFolders', {
-      $select: 'id,displayName',
-      $filter: "wellKnownName ne null"
-    });
-    
-    // Map well-known folders
-    if (wellKnownFolders && wellKnownFolders.value) {
-      for (const folder of wellKnownFolders.value) {
-        if (folderGroups[folder.id]) {
-          folderGroups[folder.id].folderName = folder.displayName;
+    // Get folder information using folderApi
+    for (const folderId of folderIds) {
+      try {
+        const folderInfo = await folderApi.getFolder(userId, folderId);
+        if (folderInfo && folderInfo.displayName) {
+          folderGroups[folderId].folderName = folderInfo.displayName;
         }
-      }
-    }
-    
-    // Get names for remaining folders
-    const remainingFolderIds = folderIds.filter(id => 
-      folderGroups[id].folderName === 'Unknown'
-    );
-    
-    // Batch remaining folders in groups of 10 to avoid long URLs
-    const batchSize = 10;
-    for (let i = 0; i < remainingFolderIds.length; i += batchSize) {
-      const batch = remainingFolderIds.slice(i, i + batchSize);
-      
-      // Build filter to get multiple folders by ID
-      const filterClauses = batch.map(id => `id eq '${id}'`);
-      const filter = filterClauses.join(' or ');
-      
-      const folderBatch = await graphClient.get('/me/mailFolders', {
-        $select: 'id,displayName',
-        $filter: filter
-      });
-      
-      if (folderBatch && folderBatch.value) {
-        for (const folder of folderBatch.value) {
-          if (folderGroups[folder.id]) {
-            folderGroups[folder.id].folderName = folder.displayName;
-          }
-        }
+      } catch (folderError) {
+        logger.warn(`Could not get info for folder ${folderId}: ${folderError.message}`);
       }
     }
   } catch (error) {
-    logger.warn(`Error populating folder names: ${error.message}`);
-    // We'll just continue with Unknown for folder names that couldn't be populated
+    logger.warn(`Error fetching folder names: ${error.message}`);
   }
 }
 
 module.exports = {
   searchEmailsHandler
-};
+}; 

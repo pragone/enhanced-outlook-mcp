@@ -1,44 +1,49 @@
 // folder/create.js
-const { createGraphClient } = require('../utils/graph-api-adapter');
+const config = require('../config');
+const logger = require('../utils/logger');
+const { folder: folderApi } = require('../utils/graph-api-adapter');
+const { listUsers } = require('../auth/token-manager');
+const auth = require('../auth/index');
 
 async function createFolderHandler(params = {}) {
-  const { userId = 'default', name } = params;
-  if (!name) {
-    return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          status: 'error',
-          message: 'Folder name required'
-        })
-      }]
-    };
-  }
+  const name = params.name;
+  const userId = params.userId || 'default';
+
+  if (!name) return formatMcpResponse({ status: 'error', message: 'Folder name required' });
 
   try {
-    const graphClient = await createGraphClient(userId);
-    const folder = await graphClient.post('/me/mailFolders', { displayName: name });
-    return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          status: 'success',
-          message: 'Folder created',
-          folder: { id: folder.id, name: folder.displayName }
-        })
-      }]
-    };
+    logger.info(`Creating mail folder '${name}' for user ${userId}`);
+    
+    // Create the folder using folderApi
+    // This will correctly handle authentication and token reuse
+    const folderData = { displayName: name };
+    const parentFolderId = params.parentFolderId; // May be undefined for root-level folders
+    
+    const folder = await folderApi.createFolder(userId, folderData, parentFolderId);
+    
+    return formatMcpResponse({
+      status: 'success', 
+      message: 'Folder created',
+      folder: {
+        id: folder.id,
+        name: folder.displayName
+      }
+    });
   } catch (error) {
-    return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          status: 'error',
-          message: `Failed: ${error.message}`
-        })
-      }]
-    };
+    logger.error(`Error creating folder: ${error.message}`);
+    return formatMcpResponse({ status: 'error', message: `Failed: ${error.message}` });
   }
+}
+
+function formatMcpResponse(data) {
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(data)
+      }
+    ]
+  };
 }
 
 module.exports = { createFolderHandler };

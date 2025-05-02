@@ -1,7 +1,9 @@
 const config = require('../config');
 const logger = require('../utils/logger');
-const { createGraphClient } = require('../utils/graph-api-adapter');
+const { calendar: calendarApi } = require('../utils/graph-api-adapter');
 const { listUsers } = require('../auth/token-manager');
+const { normalizeParameters } = require('../utils/parameter-helpers');
+const auth = require('../auth/index');
 
 /**
  * Create a new calendar event
@@ -51,7 +53,7 @@ async function createEventHandler(params = {}) {
   try {
     logger.info(`Creating calendar event "${subject}" for user ${userId}`);
     
-    const graphClient = await createGraphClient(userId);
+    const graphClient = await auth.getGraphClient(userId);
     
     // Prepare event data
     const eventData = {

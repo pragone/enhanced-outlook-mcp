@@ -1,7 +1,8 @@
 const config = require('../config');
 const logger = require('../utils/logger');
-const { createGraphClient } = require('../utils/graph-api-adapter');
+const { email: emailApi } = require('../utils/graph-api-adapter');
 const { listUsers } = require('../auth/token-manager');
+const auth = require('../auth/index');
 
 /**
  * Read a specific email by ID
@@ -204,11 +205,10 @@ async function readEmailHandler(params = {}) {
     
     logger.info(`Reading email ${finalMessageId} for user ${userId}`);
     
-    const graphClient = await createGraphClient(userId);
-    
-    // Get email with detailed content
-    const email = await graphClient.get(`/me/messages/${finalMessageId}`, {
-      $expand: 'attachments'
+    // Use the emailApi instead of direct Graph client
+    // This will properly handle the auth token
+    const email = await emailApi.getMessage(userId, finalMessageId, {
+      expand: 'attachments'
     });
     
     if (!email) {
@@ -225,9 +225,7 @@ async function readEmailHandler(params = {}) {
     
     // Mark as read if requested
     if (markAsRead && !email.isRead) {
-      await graphClient.patch(`/me/messages/${finalMessageId}`, {
-        isRead: true
-      });
+      await emailApi.markMessageAsRead(userId, finalMessageId, true);
     }
     
     // Format the detailed email response
@@ -543,12 +541,7 @@ async function markEmailHandler(params = {}) {
     
     logger.info(`Marking email ${finalEmailId} as ${isRead ? 'read' : 'unread'} for user ${userId}`);
     
-    const graphClient = await createGraphClient(userId);
-    
-    // Update the read status
-    await graphClient.patch(`/me/messages/${finalEmailId}`, {
-      isRead
-    });
+    await emailApi.markMessageAsRead(userId, finalEmailId, isRead);
     
     return {
       content: [{

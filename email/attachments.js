@@ -1,7 +1,8 @@
 const config = require('../config');
 const logger = require('../utils/logger');
-const { createGraphClient } = require('../utils/graph-api-adapter');
+const { email: emailApi } = require('../utils/graph-api-adapter');
 const { listUsers } = require('../auth/token-manager');
+const auth = require('../auth/index');
 
 /**
  * Get attachment content from an email
@@ -66,10 +67,9 @@ async function getAttachmentHandler(params = {}) {
     
     logger.info(`Getting attachment ${attachmentId} from email ${emailId} for user ${userId}`);
     
-    const graphClient = await createGraphClient(userId);
-    
-    // Get attachment
-    const attachment = await graphClient.get(`/me/messages/${emailId}/attachments/${attachmentId}`);
+    // Get attachment using emailApi
+    // This will correctly handle authentication and token reuse
+    const attachment = await emailApi.getAttachment(userId, emailId, attachmentId);
     
     if (!attachment) {
       return {
@@ -184,10 +184,9 @@ async function listAttachmentsHandler(params = {}) {
     
     logger.info(`Listing attachments for email ${emailId} for user ${userId}`);
     
-    const graphClient = await createGraphClient(userId);
-    
-    // Get attachments
-    const response = await graphClient.get(`/me/messages/${emailId}/attachments`);
+    // Get attachments using emailApi
+    // This will correctly handle authentication and token reuse
+    const response = await emailApi.listAttachments(userId, emailId);
     
     if (!response || !response.value) {
       return {
@@ -312,8 +311,6 @@ async function addAttachmentHandler(params = {}) {
     
     logger.info(`Adding attachment to email ${emailId} for user ${userId}`);
     
-    const graphClient = await createGraphClient(userId);
-    
     // Prepare attachment data
     const attachmentData = {
       '@odata.type': '#microsoft.graph.fileAttachment',
@@ -331,8 +328,9 @@ async function addAttachmentHandler(params = {}) {
       attachmentData.providerType = params.providerType || 'other';
     }
     
-    // Add attachment to email
-    const attachment = await graphClient.post(`/me/messages/${emailId}/attachments`, attachmentData);
+    // Use emailApi.addAttachment to add the attachment
+    // This will correctly handle authentication and token reuse
+    const attachment = await emailApi.addAttachment(userId, emailId, attachmentData);
     
     return {
       content: [{
@@ -423,10 +421,9 @@ async function deleteAttachmentHandler(params = {}) {
     
     logger.info(`Deleting attachment ${attachmentId} from email ${emailId} for user ${userId}`);
     
-    const graphClient = await createGraphClient(userId);
-    
-    // Delete attachment
-    await graphClient.delete(`/me/messages/${emailId}/attachments/${attachmentId}`);
+    // Delete attachment using emailApi
+    // This will correctly handle authentication and token reuse
+    await emailApi.deleteAttachment(userId, emailId, attachmentId);
     
     return {
       content: [{
@@ -505,10 +502,9 @@ async function getAttachmentsHandler(params = {}) {
     
     logger.info(`Getting attachments for message ${messageId} for user ${userId}`);
     
-    const graphClient = await createGraphClient(userId);
-    
-    // Get attachments
-    const response = await graphClient.get(`/me/messages/${messageId}/attachments`);
+    // Get attachments using emailApi
+    // This will correctly handle authentication and token reuse
+    const response = await emailApi.listAttachments(userId, messageId);
     
     if (!response || !response.value) {
       return {

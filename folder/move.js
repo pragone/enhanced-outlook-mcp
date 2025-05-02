@@ -1,7 +1,8 @@
 const config = require('../config');
 const logger = require('../utils/logger');
-const { createGraphClient } = require('../utils/graph-api-adapter');
+const { folder: folderApi } = require('../utils/graph-api-adapter');
 const { listUsers } = require('../auth/token-manager');
+const auth = require('../auth/index');
 
 /**
  * Move emails to a folder
@@ -66,7 +67,8 @@ async function moveEmailsHandler(params = {}) {
   try {
     logger.info(`Moving ${emailIds.length} emails to folder ${destinationFolderId} for user ${userId}`);
     
-    const graphClient = await createGraphClient(userId);
+    // Import the email API to use moveMessage
+    const { email: emailApi } = require('../utils/graph-api-adapter');
     
     // Track successful and failed moves
     const results = {
@@ -77,9 +79,8 @@ async function moveEmailsHandler(params = {}) {
     // Move each email (could be batched for better performance)
     for (const emailId of emailIds) {
       try {
-        await graphClient.post(`/me/messages/${emailId}/move`, {
-          destinationId: destinationFolderId
-        });
+        // Use emailApi.moveMessage to properly handle authentication
+        await emailApi.moveMessage(userId, emailId, destinationFolderId);
         
         results.success.push(emailId);
       } catch (error) {
@@ -194,7 +195,7 @@ async function moveFolderHandler(params = {}) {
   try {
     logger.info(`Moving folder ${folderId} to parent folder ${destinationFolderId} for user ${userId}`);
     
-    const graphClient = await createGraphClient(userId);
+    const graphClient = await auth.getGraphClient(userId);
     
     // Get the folder to preserve its name
     const folder = await graphClient.get(`/me/mailFolders/${folderId}`, {
@@ -376,7 +377,7 @@ async function copyEmailsHandler(params = {}) {
   try {
     logger.info(`Copying ${emailIds.length} emails to folder ${destinationFolderId} for user ${userId}`);
     
-    const graphClient = await createGraphClient(userId);
+    const graphClient = await auth.getGraphClient(userId);
     
     // Track successful and failed copies
     const results = {
