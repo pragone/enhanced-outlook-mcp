@@ -15,6 +15,61 @@ This is an enhanced, modular implementation of the Outlook MCP (Model Context Pr
 - **Rate Limiting**: Prevent API throttling with built-in rate limiting
 - **Multi-environment Configuration**: Support for development, testing, and production environments
 
+## Architecture and Interaction Flow
+
+This server acts as a bridge between a Large Language Model (LLM) like Claude and the Microsoft Graph API. It exposes a suite of tools that the LLM can use to interact with a user's Outlook data.
+
+### Server Architecture
+
+The server is built with a modular Node.js architecture, with functionalities separated by concern into different directories (`auth`, `email`, `calendar`, etc.). The main entry point is `index.js`, which sets up a server that communicates over standard input/output (StdIO).
+
+### LLM Interaction
+
+Communication does not happen over a traditional HTTP API. Instead, the LLM environment starts the MCP server as a subprocess by executing the `start.sh` script. The LLM and the server then communicate over `stdin` and `stdout` using a JSON-RPC-like protocol. The LLM sends tool-call requests as JSON objects to the server's `stdin`, and the server sends back results on its `stdout`.
+
+This StdIO-based approach simplifies setup, as it doesn't require managing ports or HTTP servers for the primary communication.
+
+### Authentication Flow
+
+The server uses the OAuth 2.0 Authorization Code Flow to securely authenticate with the Microsoft Graph API on behalf of the user. Since the main server doesn't listen on an HTTP port, it dynamically starts a temporary, lightweight web server only when needed for the OAuth redirect.
+
+Here is a diagram of the authentication sequence:
+
+```mermaid
+sequenceDiagram
+    participant Claude as Claude/LLM
+    participant MCPServer as MCP Server (StdIO)
+    participant User
+    participant Browser
+    participant AuthService as AuthService
+    participant Microsoft as Microsoft Identity
+
+    Claude->>MCPServer: Executes tool (e.g., list_emails)
+    MCPServer->>AuthService: Needs token, calls authenticate()
+    alt No valid token in cache
+        AuthService->>AuthService: Starts temporary HTTP server on localhost:3000
+        AuthService->>Microsoft: Requests Authorization URL
+        Microsoft-->>AuthService: Returns Auth URL
+        AuthService-->>MCPServer: Returns Auth URL
+        MCPServer-->>Claude: Returns Auth URL to user
+        Claude-->>User: Please authenticate by visiting this URL
+        User->>Browser: Opens URL
+        Browser->>Microsoft: User signs in & grants consent
+        Microsoft->>Browser: Redirects to http://localhost:3000/auth/callback?code=...
+        Browser->>AuthService: Hits temporary server with auth code
+        AuthService->>Microsoft: Exchanges auth code for tokens
+        Microsoft-->>AuthService: Returns access & refresh tokens
+        AuthService->>AuthService: Stores tokens securely in the home directory
+        AuthService-->>MCPServer: Authentication successful
+        MCPServer->>Claude: Tool execution proceeds
+    else Token available in cache
+        AuthService-->>MCPServer: Returns cached token
+        MCPServer->>Claude: Tool execution proceeds
+    end
+```
+
+Once authentication is complete, access tokens are cached securely in a file in the user's home directory. For subsequent tool calls, the server uses the cached token, refreshing it automatically when it expires.
+
 ## Directory Structure
 
 ```
@@ -79,7 +134,7 @@ This is an enhanced, modular implementation of the Outlook MCP (Model Context Pr
    npm install
    ```
 
-3. Create a `.env` file based on `.env.example` with your Microsoft App Registration details:
+3. Create a `.env` file with your Microsoft App Registration details. See `GETTING_STARTED.md` for detailed instructions on how to register an application in Azure and obtain your client ID and secret.
    ```
    MS_CLIENT_ID=your_client_id
    MS_CLIENT_SECRET=your_client_secret
@@ -88,27 +143,38 @@ This is an enhanced, modular implementation of the Outlook MCP (Model Context Pr
 
 ## Usage with Claude
 
-1. Configure Claude to use the MCP server by adding the following to your Claude configuration:
-   ```json
-   {
-     "tools": [
-       {
-         "name": "enhanced-outlook-mcp",
-         "url": "http://localhost:3000",
-         "auth": {
-           "type": "none"
-         }
-       }
-     ]
-   }
-   ```
+1.  Configure the Claude desktop app to use the MCP server.
+    - Open the Claude desktop configuration file. On macOS, this is located at `~/Library/Application Support/Claude/claude_desktop_config.json`.
+    - Add the following entry to the `mcpServers` object, replacing `/path/to/project` with the absolute path to the `enhanced-outlook-mcp` directory:
 
-2. Start the MCP server:
-   ```
-   npm start
-   ```
+    ```json
+    "enhanced-outlook-mcp": {
+      "command": "/path/to/project/start.sh"
+    }
+    ```
 
-3. Use the authenticate tool in Claude to initiate the authentication flow.
+    Your `claude_desktop_config.json` should look similar to this:
+
+    ```json
+    {
+      "mcpServers": {
+        "enhanced-outlook-mcp": {
+          "command": "/path/to/project/start.sh"
+        }
+      }
+    }
+    ```
+
+2.  **Make the start script executable**:
+    Open your terminal and run the following command from the project's root directory:
+    ```bash
+    chmod +x start.sh
+    ```
+
+3.  **Start the server via Claude**:
+    There is no need to run `npm start` separately. Claude will automatically start the server using the configured command when you use one of its tools.
+
+4.  Use the `authenticate` tool in Claude to initiate the authentication flow.
 
 ## Authentication Flow
 
@@ -135,102 +201,3 @@ MIT License
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
-
-## Authentication System Migration Plan
-
-The current authentication system is being updated to adopt a cleaner architecture inspired by the OneNote MCP server while maintaining the current browser-based authentication flow. This will address reliability and complexity issues without sacrificing user experience.
-
-### Goals
-
-- Create a simpler, more robust authentication system
-- Eliminate the need for a separate authentication server
-- Maintain user-friendly web-based authentication (no device code flows)
-- Improve code maintainability and error handling
-- Enable smoother token refresh operations
-
-### Implementation Plan
-
-#### Phase 1: Core Authentication Module ✅
-
-1. Create a new `AuthService` class that encapsulates authentication logic:
-   - Token caching with file persistence
-   - Silent token acquisition
-   - Web-based authentication with browser redirect
-   - Token refresh handling
-   - Microsoft Graph client initialization
-
-2. Develop a lightweight embedded HTTP server for OAuth callbacks:
-   - Handle redirect from Microsoft authentication
-   - Exchange authorization code for tokens
-   - Store tokens securely using the same mechanisms as the current system
-
-3. Create new tool handlers that utilize the improved authentication service:
-   - `authenticateHandler`: Initiates authentication flow
-   - `checkAuthStatusHandler`: Checks authentication status
-   - `revokeAuthenticationHandler`: Handles sign-out
-
-#### Phase 2: Graph Client Integration ✅
-
-1. Integrate the authentication service with Microsoft Graph:
-   - Create authenticated client instances
-   - Handle token expiration and refresh
-   - Provide consistent error handling
-
-2. Create adapters for existing API helpers to use the new authentication system:
-   - Ensure backward compatibility
-   - Improve error reporting
-
-#### Phase 3: Migration
-
-1. Implement side-by-side operation:
-   - Allow both authentication systems to run concurrently
-   - Gradually migrate features to the new system
-
-2. Test and validate:
-   - Ensure all auth scenarios work correctly
-   - Verify token persistence and refresh
-   - Test multi-user scenarios
-
-#### Phase 4: Cleanup
-
-1. Remove dependencies on external auth server
-2. Update documentation and examples
-3. Deprecate old authentication modules
-
-### Benefits
-
-- **Self-contained**: No need for a separate auth server
-- **Simplified Code**: Cleaner architecture with better separation of concerns
-- **Improved Reliability**: Better error handling and recovery
-- **Same User Experience**: Maintains the familiar browser-based authentication flow
-- **Better Maintainability**: More modular design for easier future updates
-
-## Authentication System Update
-
-The authentication system has been fully migrated to the new implementation. The old authentication system has been removed entirely as of May 2024. All users should now be using the new authentication flow.
-
-Benefits of the new authentication system:
-- More reliable token management
-- Better error handling
-- Cleaner API interactions
-- Improved security
-- Self-contained authentication (no separate auth server needed)
-
-If you experience any authentication issues, please run the `authenticate` tool to create a new authentication session.
-
-## Authentication Migration Completed
-
-As of June 2024, the authentication system migration has been completed with all phases executed:
-
-- Phase 1: Core Authentication Module ✅
-- Phase 2: Graph Client Integration ✅ 
-- Phase 3: Migration ✅
-- Phase 4: Cleanup ✅
-
-The migration has successfully:
-- Eliminated dependencies on the external auth server
-- Updated documentation and examples
-- Removed old authentication modules
-- Simplified the authentication flow for users
-
-All authentication now happens through the integrated authentication service.

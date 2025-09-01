@@ -7,7 +7,6 @@ const config = {
   server: {
     name: 'Enhanced Outlook MCP Server',
     version: '1.0.0',
-    port: process.env.PORT || 3000,
     logLevel: process.env.LOG_LEVEL || 'info',
     tokenStoragePath: process.env.TOKEN_STORAGE_PATH || path.join(os.homedir(), '.enhanced-outlook-mcp-tokens.json')
   },

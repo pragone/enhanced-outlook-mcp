@@ -26,11 +26,10 @@ class AuthService {
     // Configuration options
     this.clientId = options.clientId || config.microsoft.clientId;
     this.clientSecret = options.clientSecret || process.env.MS_CLIENT_SECRET;
-    this.redirectUri = options.redirectUri || config.microsoft.redirectUri || 'http://localhost:3333/auth/callback';
+    this.redirectUri = options.redirectUri || config.microsoft.redirectUri;
     this.authority = options.authority || config.microsoft.authority;
     this.scopes = options.scopes || config.microsoft.scopes;
     this.cacheFile = options.cacheFile || path.join(os.homedir(), '.enhanced-outlook-mcp-token-cache.json');
-    this.port = options.port || 3333;
     
     if (!this.clientId) {
       throw new Error('Client ID is required. Set MS_CLIENT_ID in your .env file.');

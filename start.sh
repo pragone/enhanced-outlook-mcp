@@ -1,23 +1,16 @@
 #!/bin/bash
 
-# Start the main MCP server
-node index.js &
-MCP_PID=$!
+# This script starts the Enhanced Outlook MCP server.
+# The server communicates over StdIO and will be started by the Claude desktop app.
 
-# Start the authentication server
-node outlook-auth-server.js &
-AUTH_PID=$!
+# The authentication process will automatically start a temporary web server
+# on port 3000 (by default) to handle the OAuth 2.0 callback.
+# There is no need to run a separate authentication server.
 
-# Handle shutdown
-function cleanup {
-  echo "Shutting down..."
-  kill $MCP_PID
-  kill $AUTH_PID
-  exit 0
-}
+# Change to the script's directory to ensure correct file resolution
+cd "$(dirname "$0")"
 
-# Trap SIGINT (Ctrl+C)
-trap cleanup SIGINT
-
-echo "Both servers started. Press Ctrl+C to stop."
-wait
+# Start the main MCP server process
+# Use exec to replace the shell process with the node process,
+# ensuring signals are handled correctly.
+exec node index.js
